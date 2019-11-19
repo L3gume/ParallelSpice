@@ -10,15 +10,18 @@ parser.add_argument('-r', '--resistor', type=int, required=True, default=None,
                     help='Mesh Resistor Value')
 parser.add_argument('-s', '--size', type=int, nargs='+', required=True, default=None,
                     help='Generate permutations for given a list of input channels')
-parser.add_argument('-v', '--voltage', type=int, required=False, default=1,
-                    help='Mesh Voltage')
+parser.add_argument('-v', '--voltages', type=int, nargs='+', required=False, default=None,
+                    help='2 Mesh Voltage')
+parser.add_argument('-f', '--frequencies', type=int, nargs='+', required=False, default=None,
+                    help='2 Mesh Frequncies')
 
 # get args
 args = vars(parser.parse_args())
 directory = args.get('dir')
 resistor = args.get('resistor')
 size = args.get('permutations')
-voltage = args.get('voltage')
+voltages = args.get('voltage')
+frequencies = args.get('frequencies')
 
 # verify args
 if resistor <= 0:
@@ -29,11 +32,17 @@ for s in size:
 
 # generate mesh
 A = g.generateMesh(size[0], size[1])
-A = n.applyVoltage(A)
+A = n.applyVoltages(A)
 cols = len(A[0])
     
 # generate associated values
-R = [resistor for col in range(cols)]
+Y = [1 / resistor for col in range(cols)]
 J = [0 for col in range(cols)]
 E = [0 for col in range(cols)]
-E[-1] = voltage
+F = [0 for col in range(cols)]
+E[-1] = voltages[1]
+E[-2] = voltages[0]
+F[-1] = frequencies[1]
+F[-2] = frequencies[0]
+
+# save here A,Y,J,E,F
