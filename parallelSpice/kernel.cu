@@ -10,7 +10,7 @@
 #include "JsonParser.h"
 #include "dbg.h"
 
-cudaError_t solve(const std::string& file_path);
+cudaError_t solve(json::parse_result& data);
 void choleskyDecomposition(double* A, double* L, int dim);
 
 __global__ void choleskyTimepointSolverKernel(double* A, double* L, double* bs, double* y, double* xs, int dim) {
@@ -61,15 +61,16 @@ int main(const int argc, char* argv[]) {
         parallelSpice.exe [json file path])" << '\n';
         exit(1);
     }
-    const auto file_path = std::string{ argv[1] };
-    auto result = parse_result{};
-    auto parser = JsonParser(file_path);
+    const auto file_path = std::string{argv[1]};
+    auto result = json::parse_result{};
+    auto parser = json::JsonParser(file_path);
     if (!parser.parse(result)) {
         exit(1);
     }
+    dbg("Successfully parsed file: ", file_path);
     
     // Solve.
-    auto cudaStatus = solve(file_path);
+    auto cudaStatus = solve(result);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "solve failed!");
         return 1;
@@ -86,12 +87,9 @@ int main(const int argc, char* argv[]) {
     return 0;
 }
 
-cudaError_t solve(const std::string& file_path) {
+cudaError_t solve(json::parse_result& data) {
 	const auto dim = 3;
 	const auto num_timepoints = 10;
-    
-    dbg("File path: ", file_path);
-    auto parser = JsonParser(file_path);
 
 	std::vector<double> A = { 25, 15, -5,
 							  15, 18,  0,

@@ -8,6 +8,8 @@
 #include "include/rapidjson/document.h"
 #include "cuda_mem.h"
 
+namespace json {
+
 struct parse_result {
     cuda_mem::grid<double> A;
     std::vector<double> J;
@@ -30,6 +32,8 @@ public:
 private:
     _Check_return_ static bool parse_grid(const rapidjson::Value& doc, cuda_mem::grid<double>& grid);
     _Check_return_ static bool parse_vector(const rapidjson::Value& doc, std::vector<double>& vec);
-    
+
     rapidjson::Document m_doc;
 };
+
+}

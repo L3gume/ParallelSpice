@@ -8,6 +8,8 @@
 #include "dbg.h"
 #include "cuda_utils.h"
 
+using namespace json;
+
 // Initialize the parser with a filepath
 JsonParser::JsonParser(const std::string& file_path) {
     m_doc = {}; // initialize the JSON document
