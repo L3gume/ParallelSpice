@@ -3,31 +3,62 @@
 #include "device_launch_parameters.h"
 
 #include <stdio.h>
+#include <math.h>
+#include <vector>
 
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
+cudaError_t solve();
+void choleskyDecomposition(double* A, double* L, int dim);
 
-__global__ void addKernel(int *c, const int *a, const int *b)
-{
-    int i = threadIdx.x;
-    c[i] = a[i] + b[i];
+__global__ void choleskyTimepointSolverKernel(double* A, double* L, double* bs, double* y, double* xs, int dim) {
+	const auto time_point = blockIdx.x * blockDim.x + threadIdx.x;	const auto b = &bs[time_point * dim];	auto accumulator = 0.0;	// Reset y to 0	for (auto i = 0; i < dim; i++)	{		y[i] = 0.0;	}	// Solve Ly = b	for (auto i = 0; i < dim; i++)	{		accumulator = 0.0;		for (auto j = 0; j < i; j++)		{			accumulator += L[i * dim + j] * y[j];		}		y[i] = (b[i] - accumulator) / L[i * dim + i];	}
+	// Solve (L_T)x = y
+	for (auto i = dim - 1; i < 0; i--)
+	{
+		accumulator = 0.0;
+		for (auto j = i + 1; j < dim; j++)
+		{
+			accumulator += L[j * dim + i] * xs[time_point * dim + j];
+		}
+		
+		xs[time_point * dim + i] = (y[i] - accumulator) / L[i * dim + i];
+	}
 }
 
-int main()
-{
-    const int arraySize = 5;
-    const int a[arraySize] = { 1, 2, 3, 4, 5 };
-    const int b[arraySize] = { 10, 20, 30, 40, 50 };
-    int c[arraySize] = { 0 };
+// Perform Cholesky decomposition
+void choleskyDecomposition(double* A, double* L, int dim) {
+	auto accumulator = 0.0;
 
-    // Add vectors in parallel.
-    cudaError_t cudaStatus = addWithCuda(c, a, b, arraySize);
+	for (auto i = 0; i < dim; i++)
+	{
+		for (auto j = 0; j < (i + 1); j++)
+		{
+			accumulator = 0.0;
+			for (auto k = 0; k < j; k++)
+			{
+				accumulator += L[i * dim + k] * L[j * dim + k];
+			}
+
+			if (i == j)
+			{
+				L[i * dim + j] = sqrt(A[i * dim + i] - accumulator);
+			}
+			else
+			{
+				L[i * dim + j] = (1.0 / L[j * dim + j]) * (A[i * dim + j] - accumulator);
+			}
+		}
+	}
+}
+
+int main() {
+	// TODO: Get parsed arguments to put into solver.
+
+    // Solve.
+    auto cudaStatus = solve();
     if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addWithCuda failed!");
+        fprintf(stderr, "solve failed!");
         return 1;
     }
-
-    printf("{1,2,3,4,5} + {10,20,30,40,50} = {%d,%d,%d,%d,%d}\n",
-        c[0], c[1], c[2], c[3], c[4]);
 
     // cudaDeviceReset must be called before exiting in order for profiling and
     // tracing tools such as Nsight and Visual Profiler to show complete traces.
@@ -40,82 +71,137 @@ int main()
     return 0;
 }
 
-// Helper function for using CUDA to add vectors in parallel.
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
-{
-    int *dev_a = 0;
-    int *dev_b = 0;
-    int *dev_c = 0;
-    cudaError_t cudaStatus;
+cudaError_t solve() {
+	const auto dim = 3;
+	const auto num_timepoints = 10;
 
-    // Choose which GPU to run on, change this on a multi-GPU system.
-    cudaStatus = cudaSetDevice(0);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
-        goto Error;
-    }
+	std::vector<double> A = { 25, 15, -5,
+							  15, 18,  0,
+							  -5,  0, 11 };
+	std::vector<double> L(dim * dim, 0.0);
+	std::vector<double> Bs(num_timepoints * dim, 10.0);
+	std::vector<double> Xs(num_timepoints * dim, 0.0);
+	std::vector<double> y(dim, 0.0);
 
-    // Allocate GPU buffers for three vectors (two input, one output)    .
-    cudaStatus = cudaMalloc((void**)&dev_c, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
+	double* dev_A = 0;
+	double* dev_L = 0;
+	double* dev_Bs = 0;
+	double* dev_Xs = 0;
+	double* dev_Y = 0;
 
-    cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
+	// Perform Cholesky decomposition
+	choleskyDecomposition(A.data(), L.data(), dim);
 
-    cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
+	// Choose which GPU to run on, change this on a multi-GPU system.
+	auto cudaStatus = cudaSetDevice(0);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
+		goto Error;
+	}
 
-    // Copy input vectors from host memory to GPU buffers.
-    cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
+	// Allocate GPU buffers for image and new image.
+	cudaStatus = cudaMalloc((void**)& dev_A, dim * dim * sizeof(double));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc for A array failed!");
+		goto Error;
+	}
 
-    cudaStatus = cudaMemcpy(dev_b, b, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
+	cudaStatus = cudaMalloc((void**)& dev_L, dim * dim * sizeof(double));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc for L array failed!");
+		goto Error;
+	}
 
-    // Launch a kernel on the GPU with one thread for each element.
-    addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
+	cudaStatus = cudaMalloc((void**)& dev_Bs, num_timepoints * dim * sizeof(double));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc for Bs array failed!");
+		goto Error;
+	}
 
-    // Check for any errors launching the kernel
-    cudaStatus = cudaGetLastError();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-        goto Error;
-    }
-    
-    // cudaDeviceSynchronize waits for the kernel to finish, and returns
-    // any errors encountered during the launch.
-    cudaStatus = cudaDeviceSynchronize();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
-        goto Error;
-    }
+	cudaStatus = cudaMalloc((void**)& dev_Xs, num_timepoints * dim * sizeof(double));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc for Xs array failed!");
+		goto Error;
+	}
 
-    // Copy output vector from GPU buffer to host memory.
-    cudaStatus = cudaMemcpy(c, dev_c, size * sizeof(int), cudaMemcpyDeviceToHost);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
+	cudaStatus = cudaMalloc((void**)& dev_Y, dim * sizeof(double));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc for Y array failed!");
+		goto Error;
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(dev_A, A.data(), dim * dim * sizeof(double), cudaMemcpyHostToDevice);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy from A to dev_A failed!");
+		goto Error;
+	}
+
+	cudaStatus = cudaMemcpy(dev_L, L.data(), dim * dim * sizeof(double), cudaMemcpyHostToDevice);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy from L to dev_L failed!");
+		goto Error;
+	}
+
+	cudaStatus = cudaMemcpy(dev_Bs, Bs.data(), num_timepoints * dim * sizeof(double), cudaMemcpyHostToDevice);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy from Bs to dev_Bs failed!");
+		goto Error;
+	}
+
+	cudaStatus = cudaMemcpy(dev_Xs, Xs.data(), num_timepoints * dim * sizeof(double), cudaMemcpyHostToDevice);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy from Xs to dev_Xs failed!");
+		goto Error;
+	}
+
+	cudaStatus = cudaMemcpy(dev_Y, y.data(), dim * sizeof(double), cudaMemcpyHostToDevice);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy from Y to dev_Y failed!");
+		goto Error;
+	}
+
+	// Perform solver for each timepoint
+	choleskyTimepointSolverKernel << <1, num_timepoints >> > (dev_A, dev_L, dev_Bs, dev_Y, dev_Xs, dim);
+
+	// Check for any errors launching the kernel
+	cudaStatus = cudaGetLastError();
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "choleskyTimepointSolverKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
+		goto Error;
+	}
+
+	// cudaDeviceSynchronize waits for the kernel to finish, and returns
+	// any errors encountered during the launch.
+	cudaStatus = cudaDeviceSynchronize();
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching choleskyTimepointSolverKernel!\n", cudaStatus);
+		goto Error;
+	}
+
+	// Copy output vector from GPU buffer to host memory.
+	cudaStatus = cudaMemcpy(Xs.data(), dev_Xs, num_timepoints * dim * sizeof(double), cudaMemcpyDeviceToHost);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy from dev_Xs to Xs failed!");
+		goto Error;
+	}
+
+	// Print timepoints
+	for (auto i = 0; i < num_timepoints; i++)
+	{
+		printf("Timepoint %d", i + 1);
+		for (auto j = 0; j < dim; j++)
+		{
+			printf("%lf ", Xs[i * dim + j]);
+		}
+		printf("\n");
+	}
 
 Error:
-    cudaFree(dev_c);
-    cudaFree(dev_a);
-    cudaFree(dev_b);
-    
-    return cudaStatus;
+	cudaFree(dev_A);
+	cudaFree(dev_L);
+	cudaFree(dev_Bs);
+	cudaFree(dev_Xs);
+
+	return cudaStatus;
 }
