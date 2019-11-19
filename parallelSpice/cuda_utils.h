@@ -1,9 +1,6 @@
 #pragma once
 #include "cuda_runtime.h"
-#include <vector>
-#include <algorithm>
 #include <fstream>
-#include <cassert>
 
 namespace cuda_utils {
 

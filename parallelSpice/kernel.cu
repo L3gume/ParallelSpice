@@ -55,7 +55,6 @@ void choleskyDecomposition(double* A, double* L, int dim) {
 }
 
 int main(const int argc, char* argv[]) {
-	// TODO: Get parsed arguments to put into solver.
     if (argc != 2) {
         std::cerr <<
         R"(Invalid number of arguments! usage:
@@ -63,6 +62,11 @@ int main(const int argc, char* argv[]) {
         exit(1);
     }
     const auto file_path = std::string{ argv[1] };
+    auto result = parse_result{};
+    auto parser = JsonParser(file_path);
+    if (!parser.parse(result)) {
+        exit(1);
+    }
     
     // Solve.
     auto cudaStatus = solve(file_path);
