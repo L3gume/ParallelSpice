@@ -1,8 +1,11 @@
+/*
+ * cuda_mem.h - some wrappers around CUDA device memory. Meant to make working with device memory easier
+ * author: Justin Tremblay, 2019
+ */
 #pragma once
 
 #include "cuda_runtime.h"
 #include <cassert>
-#include <utility>
 #include <iostream>
 #include <vector>
 
@@ -52,7 +55,7 @@ namespace cuda_mem {
 		assert(m_last_error == cudaSuccess);
 
         if (ptr != nullptr) {
-            std::copy(&ptr[0], &ptr[0] + size, m_ptr);
+            std::copy(&ptr[0], &ptr[0] + size, m_ptr);                        
         }
 	}
 
@@ -175,17 +178,25 @@ namespace cuda_mem {
         return cuda_device_ptr<T>(size, ptr);
     }
     
+    // Cuda unique to vector, cuda device may actually not be necessary anymore
+    template<typename T>
+    static std::vector<T> cuda_unique_to_vector(const size_t size, const cuda_unique_ptr<T>& ptr) {
+        std::vector<T> ret(size);
+        std::copy(ptr.get(), ptr.get() + size, std::back_inserter(ret));
+        return ret;
+	}
+    
     // 2D array implementation
     // Typedef for grid
     template <typename T>
     using grid = std::vector<std::vector<T>>;
     
     template <typename T>
-    grid<T> make_grid(const int n, const T val) {
+    grid<T> make_grid(const int width, const int height, const T val) {
         grid<T> g;
-        g.assign(n, std::vector<T>());
+        g.assign(height, std::vector<T>());
         for (auto& sub : g) {
-            sub.assign(n, val);
+            sub.assign(width, val);
         }
         return g;
     }
@@ -205,11 +216,12 @@ namespace cuda_mem {
     }
     
     template <typename T>
-    grid<T> cuda_unique_to_grid(const int n, const T* ptr) {
+    grid<T> cuda_unique_to_grid(const int width, const int height, const T* ptr) {
         auto ret = grid<T>{};
-        ret.reserve(n);
-        for (auto i = 0; i < n; ++i) {
-            ret[i] = std::vector<T>(&ptr[n * i], &ptr[n * i] + n);
+        ret.reserve(height);
+        for (auto i = 0; i < height; ++i) {
+            //ret[i] = std::vector<T>(&ptr[n * i], &ptr[n * i] + n);
+            std::copy(&ptr[width * i], &ptr[width * i] + width, std::back_inserter(ret[i]));
         }
         return ret;
     }

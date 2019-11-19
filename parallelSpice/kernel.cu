@@ -5,8 +5,12 @@
 #include <stdio.h>
 #include <math.h>
 #include <vector>
+#include <string>
+#include <iostream>
+#include "JsonParser.h"
+#include "dbg.h"
 
-cudaError_t solve();
+cudaError_t solve(const std::string& file_path);
 void choleskyDecomposition(double* A, double* L, int dim);
 
 __global__ void choleskyTimepointSolverKernel(double* A, double* L, double* bs, double* y, double* xs, int dim) {
@@ -50,11 +54,18 @@ void choleskyDecomposition(double* A, double* L, int dim) {
 	}
 }
 
-int main() {
+int main(const int argc, char* argv[]) {
 	// TODO: Get parsed arguments to put into solver.
-
+    if (argc != 2) {
+        std::cerr <<
+        R"(Invalid number of arguments! usage:
+        parallelSpice.exe [json file path])" << '\n';
+        exit(1);
+    }
+    const auto file_path = std::string{ argv[1] };
+    
     // Solve.
-    auto cudaStatus = solve();
+    auto cudaStatus = solve(file_path);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "solve failed!");
         return 1;
@@ -71,9 +82,12 @@ int main() {
     return 0;
 }
 
-cudaError_t solve() {
+cudaError_t solve(const std::string& file_path) {
 	const auto dim = 3;
 	const auto num_timepoints = 10;
+    
+    dbg("File path: ", file_path);
+    auto parser = JsonParser(file_path);
 
 	std::vector<double> A = { 25, 15, -5,
 							  15, 18,  0,
