@@ -45,8 +45,9 @@ def generateMesh(N, M):
             
     return A
 
-def applyVoltage(M):
+def applyVoltages(M):
     
+    # RHS stimulation
     # add additional current to each row
     rows, cols = m.size(M)
     A = zeros(rows, cols+1)
@@ -60,8 +61,21 @@ def applyVoltage(M):
     A[0][-1] = -1
     A[-1][-1] = 1
     
-    A = A[:-1]
+
+    #LHS stim
+    rows, cols = m.size(A)
+    C = zeros(rows, cols+1)
+
+    for row in range(rows):
+        for col in range(cols):
+            C[row][col+1] = A[row][col]
+    
+    C[0][0] = -1
+    C[-1][-1] = 1        
+    
+    # ground
+    C = A[:-1]
         
-    return A
+    return C
 
 
