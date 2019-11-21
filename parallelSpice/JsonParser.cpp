@@ -27,7 +27,6 @@ JsonParser::JsonParser(const std::string& file_path) {
 _Check_return_ bool JsonParser::parse(parse_result& result) {
     // Make sure the document properly parsed
     if (m_doc.HasParseError()) {
-        dbg(m_doc.GetParseError());
         return false;
     }
     
@@ -43,31 +42,26 @@ _Check_return_ bool JsonParser::parse(parse_result& result) {
     
     // parse the A matrix
     if (!m_doc.HasMember("A")) return false;
-    dbg("Parsing A matrix...\n");
     const auto& a_doc = m_doc["A"];
     if (!parse_grid(a_doc, result.A)) return false;
     
     // parse the L matrix
     if (!m_doc.HasMember("J")) return false;
-    dbg("Parsing J vector...\n");
     const auto& j_doc = m_doc["J"];
     if (!parse_vector(j_doc, result.J)) return false;
     
     // parse the Y Vector
     if (!m_doc.HasMember("Y")) return false;
-    dbg("Parsing Y vector...\n");
     const auto& y_doc = m_doc["Y"];
     if (!parse_vector(y_doc, result.Y)) return false;
     
     // parse the E Vector
     if (!m_doc.HasMember("E")) return false;
-    dbg("Parsing E vector...\n");
     const auto& e_doc = m_doc["E"];
     if (!parse_vector(e_doc, result.E)) return false;
     
     // parse the F Vector
     if (!m_doc.HasMember("F")) return false;
-    dbg("Parsing F vector...\n");
     const auto& f_doc = m_doc["F"];
     if (!parse_vector(f_doc, result.F)) return false;
 
