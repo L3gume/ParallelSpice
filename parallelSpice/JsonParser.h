@@ -19,7 +19,6 @@ struct parse_result {
 
     size_t n;
     size_t m;
-    size_t timepoints;
 };
 
 // Simple implementation of a JSON parser for the project.

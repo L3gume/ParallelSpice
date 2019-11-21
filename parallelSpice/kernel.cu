@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES
 
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
@@ -21,12 +22,6 @@ __global__ void choleskyTimepointSolverKernel(double* L, double* Bs, double* tem
 	const auto b = &Bs[time_point * n];
 	auto accumulator = 0.0;
 
-	// Ensure temp is 0
-	/*for (auto i = 0; i < n; i++)
-	{
-		temp[i] = 0.0;
-	}*/
-
 	// Solve L*temp_solver = b
 	for (auto i = 0; i < n; i++)
 	{
@@ -40,28 +35,29 @@ __global__ void choleskyTimepointSolverKernel(double* L, double* Bs, double* tem
 		temp_solver[i] = (b[i] - accumulator) / L[i * n + i];
 	}
 
-	// Solve (L_T)x = temp
-	for (auto i = n - 1; i < 0; i--)
+	// Solve (L_T)x = temp_solver
+	const auto X = &Xs[time_point * n];
+	for (auto i = n - 1; i >= 0; i--)
 	{
 		accumulator = 0.0;
 		for (auto j = i + 1; j < n; j++)
 		{
-			accumulator += L[j * n + i] * Xs[time_point * n + j];
+			accumulator += L[j * n + i] * X[j];
 		}
 		
-		Xs[time_point * n + i] = (temp_solver[i] - accumulator) / L[i * n + i];
+		X[i] = (temp_solver[i] - accumulator) / L[i * n + i];
 	}
 }
 
 // Returns a set of Bs where B_i is the forcing function at a timepoint
-__global__ void bTimepointGeneratorKernel(double* A, double* Bs, double* Y, double* J, double* E, double* F, double* temp_generator, const int n, const int m, const int time_slice) {
+__global__ void bTimepointGeneratorKernel(double* A, double* Bs, double* Y, double* J, double* E, double* F, double* temp_generator, const int n, const int m, const int T_max, const int num_samples) {
 	const auto time_point = blockIdx.x * blockDim.x + threadIdx.x;
 	const auto B = &Bs[time_point * n];
 	
 	// Calculate J - YE
 	for (auto i = 0; i < m; i++)
 	{
-		temp_generator[i] = J[i] - Y[i] * E[i] * cos(F[i] * time_point / time_slice);
+		temp_generator[i] = J[i] - Y[i] * E[i] * cos(2 * M_PI * F[i] * time_point * T_max / num_samples);
 	}
 
 	// Multiply A by output
@@ -174,8 +170,10 @@ int main(const int argc, char* argv[]) {
 }
 
 cudaError_t solve(json::parse_result& data) {
-	auto num_timepoints = 10 * std::max(1, static_cast<int>(*std::max_element(data.F.data(), data.F.data() + data.F.size()))); // Set num_timepoints as 10*MAX(F)
-	std::vector<double> Bs(num_timepoints * data.n, 10.0);
+	const auto T_max = static_cast<int>(*std::max_element(data.F.data(), data.F.data() + data.F.size()));
+	auto num_timepoints = 2 * std::max(1, T_max); // Set num_timepoints as 10*MAX(F)
+	
+	std::vector<double> Bs(num_timepoints * data.n, 0.0);
 	std::vector<double> Xs(num_timepoints * data.n, 0.0);
 	std::vector<double> temp_solver(data.n, 0.0);
 	std::vector<double> temp_generator(data.n, 0.0);
@@ -279,9 +277,9 @@ cudaError_t solve(json::parse_result& data) {
 	}
 
 	auto a = new double[data.m * data.n];
-	for (auto i = 0; i < data.n; i++)
+	for (auto i = 0; i < data.m; i++)
 	{
-		for (auto j = 0; j < data.m; j++)
+		for (auto j = 0; j < data.n; j++)
 		{
 			a[i * data.m + j] = data.A[i][j];
 		}
@@ -359,7 +357,7 @@ cudaError_t solve(json::parse_result& data) {
 	cuda_utils::divide_threads_into_blocks(num_timepoints, num_blocks, num_threads);
 
 	// Generate Bs
-	bTimepointGeneratorKernel << <num_blocks, num_threads >> > (dev_A, dev_Bs, dev_Y, dev_J, dev_E, dev_F, dev_temp_generator, data.n, data.m, num_timepoints);
+	bTimepointGeneratorKernel << <num_blocks, num_threads >> > (dev_A, dev_Bs, dev_Y, dev_J, dev_E, dev_F, dev_temp_generator, data.n, data.m, T_max, num_timepoints);
 
 	// Check for any errors launching the kernel
 	cudaStatus = cudaGetLastError();
@@ -380,6 +378,13 @@ cudaError_t solve(json::parse_result& data) {
 	cudaStatus = cudaMemcpy(Bs.data(), dev_Bs, num_timepoints * data.n * sizeof(double), cudaMemcpyDeviceToHost);
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaMemcpy from dev_Bs to Bs failed!");
+		goto Error;
+	}
+
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(dev_Bs, Bs.data(), num_timepoints * data.n * sizeof(double), cudaMemcpyHostToDevice);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy from Bs to dev_Bs failed!");
 		goto Error;
 	}
 
@@ -411,13 +416,31 @@ cudaError_t solve(json::parse_result& data) {
 	// Print timepoints
 	for (auto i = 0; i < num_timepoints; i++)
 	{
-		printf("Timepoint %d", i + 1);
+		printf("Timepoint %d\n", i + 1);
 		for (auto j = 0; j < data.n; j++)
 		{
 			printf("%lf ", Xs[i * data.n + j]);
 		}
 		printf("\n");
 	}
+
+	auto temp = new double[data.n];
+	for (auto i = 0; i < data.n; i++)
+	{
+		temp[i] = 0;
+		for (auto j = 0; j < data.n; j++)
+		{
+			temp[i] += S[i * data.n + j] * Xs[j];
+		}
+	}
+
+	// Print timepoints
+	printf("Sanity: ");
+	for (auto i = 0; i < data.n; i++)
+	{
+		printf("%lf ", temp[i]);
+	}
+			
 
 Error:
 	cudaFree(dev_A);
