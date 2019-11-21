@@ -124,9 +124,11 @@
     <ClInclude Include="include\rapidjson\stringbuffer.h" />
     <ClInclude Include="include\rapidjson\writer.h" />
     <ClInclude Include="JsonParser.h" />
+    <ClInclude Include="JsonWriter.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="JsonParser.cpp" />
+    <ClCompile Include="JsonWriter.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

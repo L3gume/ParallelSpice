@@ -35,10 +35,6 @@ _Check_return_ bool JsonParser::parse(parse_result& result) {
     result.n = m_doc["N"].GetInt();
     if (!m_doc.HasMember("M")) return false;
     result.m = m_doc["M"].GetInt();
-
-    // Get the number of time points
-    if (!m_doc.HasMember("timepoints")) return false;
-    result.timepoints = m_doc["timepoints"].GetInt();
     
     // parse the A matrix
     if (!m_doc.HasMember("A")) return false;
