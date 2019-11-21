@@ -20,7 +20,77 @@
  */
 
 namespace cuda_mem {
+	namespace internal {
+		template<typename T>
+		class cuda_device_ptr {
+		public:
+			cuda_device_ptr(size_t size, const T* ptr);
+			~cuda_device_ptr();
 
+			T operator->() const noexcept;
+			T operator*()const noexcept;
+
+			T* get() const noexcept;
+			void release() noexcept;
+
+			T* begin() const noexcept;
+			T* end() const noexcept;
+
+
+			T* m_ptr = nullptr;
+			size_t m_size = 0;
+		};
+
+		template<typename T>
+		cuda_device_ptr<T>::cuda_device_ptr(const size_t size, const T* ptr) {
+			m_size = size;
+			m_ptr = new T[size];
+			cudaMemcpy(m_ptr, ptr, size * sizeof(T), cudaMemcpyDeviceToHost);
+		}
+
+		template<typename T>
+		cuda_device_ptr<T>::~cuda_device_ptr() {
+			release();
+		}
+
+		template<typename T>
+		T cuda_device_ptr<T>::operator->() const noexcept {
+			return T();
+		}
+
+		template<typename T>
+		T cuda_device_ptr<T>::operator*() const noexcept {
+			return T();
+		}
+
+		template<typename T>
+		T* cuda_device_ptr<T>::get() const noexcept {
+			return m_ptr;
+		}
+
+		template<typename T>
+		void cuda_device_ptr<T>::release() noexcept {
+			if (m_ptr != nullptr) {
+				cudaFree(m_ptr);
+				m_ptr = nullptr;
+			}
+		}
+
+		template<typename T>
+		T* cuda_device_ptr<T>::begin() const noexcept {
+			return m_ptr;
+		}
+
+		template<typename T>
+		T* cuda_device_ptr<T>::end() const noexcept {
+			return m_ptr + m_size;
+		}
+
+		template<typename T>
+		static cuda_device_ptr<T> make_cuda_device(const size_t size, const T* ptr) {
+			return cuda_device_ptr<T>(size, ptr);
+		}
+	}
 // Can only be moved, rendering the moved pointer unusable 
 template<typename T>
 class cuda_unique_ptr {
@@ -36,21 +106,20 @@ public:
 
     ~cuda_unique_ptr();
 
-    T& operator[](int index);
     T operator->() const noexcept;
     T operator*() const noexcept;
     T* get() const noexcept;
     void release() noexcept;
 
+    size_t size = 0;
 protected:
-    T* m_ptr;
-    cudaError_t m_last_error;
-    size_t m_size = 0;
+	T* m_ptr;
+	cudaError_t m_last_error;
 };
 
 template <typename T>
 cuda_unique_ptr<T>::cuda_unique_ptr(const size_t size, const T* ptr) {
-    m_size = size;
+    size = size;
     m_ptr = nullptr;
     m_last_error = cudaMallocManaged(reinterpret_cast<void**>(&m_ptr), size * sizeof(T));
     assert(m_last_error == cudaSuccess);
@@ -63,11 +132,11 @@ cuda_unique_ptr<T>::cuda_unique_ptr(const size_t size, const T* ptr) {
 template <typename T>
 cuda_unique_ptr<T>::cuda_unique_ptr(cuda_unique_ptr&& rhs) noexcept {
     m_ptr = nullptr;
-    m_size = rhs.m_size;
-    m_last_error = cudaMallocManaged(reinterpret_cast<void**>(&m_ptr), m_size * sizeof(T));
+    size = rhs.size;
+    m_last_error = cudaMallocManaged(reinterpret_cast<void**>(&m_ptr), size * sizeof(T));
     assert(m_last_error == cudaSuccess);
 
-    std::copy(&rhs.m_ptr[0], &rhs.m_ptr[0] + m_size, m_ptr);
+    std::copy(&rhs.m_ptr[0], &rhs.m_ptr[0] + size, m_ptr);
     rhs.release();
 }
 
@@ -79,12 +148,6 @@ cuda_unique_ptr<T> cuda_unique_ptr<T>::operator=(cuda_unique_ptr&& rhs) noexcept
 template <typename T>
 cuda_unique_ptr<T>::~cuda_unique_ptr() {
     if (m_ptr != nullptr) cudaFree(m_ptr);
-}
-
-template <typename T>
-T& cuda_unique_ptr<T>::operator[](const int index) {
-    // warning: doesn't check bounds
-    return m_ptr[index];
 }
 
 template <typename T>
@@ -111,84 +174,15 @@ void cuda_unique_ptr<T>::release() noexcept {
 }
 
 template <typename T>
-static cuda_unique_ptr<T> make_cuda_unique(const size_t size, const T* ptr) {
+static cuda_unique_ptr<T> raw_to_cuda_unique(const size_t size, const T* ptr) {
     return cuda_unique_ptr<T>(size, ptr);
 }
 
 template<typename T>
-static cuda_unique_ptr<T> make_cuda_unique(const std::vector<T>& vec) {
+static cuda_unique_ptr<T> vec_to_cuda_unique(const std::vector<T>& vec) {
     return cuda_unique_ptr<T>(vec.size(), vec.data());
 }
-
-template<typename T>
-class cuda_device_ptr {
-public:
-	cuda_device_ptr(size_t size, const T* ptr);
-	~cuda_device_ptr();
-
-	T operator->() const noexcept;
-	T operator*()const noexcept;
-
-	T* get() const noexcept;
-	void release() noexcept;
-
-	T* begin() const noexcept;
-	T* end() const noexcept;
-
-private:
-	T* m_ptr = nullptr;
-	size_t m_size = 0;
-};
-
-template<typename T>
-cuda_device_ptr<T>::cuda_device_ptr(const size_t size, const T* ptr) {
-    m_size = size;
-    m_ptr = new T[size];
-    cudaMemcpy(m_ptr, ptr, size * sizeof(T), cudaMemcpyDeviceToHost);
-}
-
-template<typename T>
-cuda_device_ptr<T>::~cuda_device_ptr() {
-	release();
-}
-
-template<typename T>
-T cuda_device_ptr<T>::operator->() const noexcept {
-	return T();
-}
-
-template<typename T>
-T cuda_device_ptr<T>::operator*() const noexcept {
-	return T();
-}
-
-template<typename T>
-T* cuda_device_ptr<T>::get() const noexcept {
-	return m_ptr;
-}
-
-template<typename T>
-void cuda_device_ptr<T>::release() noexcept {
-	if (m_ptr != nullptr) {
-        cudaFree(m_ptr);
-		m_ptr = nullptr;
-	}
-}
-
-template<typename T>
-T* cuda_device_ptr<T>::begin() const noexcept {
-	return m_ptr;
-}
-
-template<typename T>
-T* cuda_device_ptr<T>::end() const noexcept {
-	return m_ptr + m_size;
-}
-
-template<typename T>
-static cuda_device_ptr<T> make_cuda_device(const size_t size, const T* ptr) {
-   return cuda_device_ptr<T>(size, ptr);
-}
+	
 
 // cuda_unique_2d
 // inherits from cuda_unique_ptr
@@ -206,32 +200,25 @@ public:
     cuda_unique_2d(cuda_unique_2d<T>&& rhs) noexcept;
     cuda_unique_2d operator=(cuda_unique_2d<T>&& rhs) noexcept;
 
-    T& at(int x, int y);
-private:
-    size_t m_width;
-    size_t m_height;
+    size_t width;
+    size_t height;
 };
 
 template <typename T>
 cuda_unique_2d<T>::cuda_unique_2d(const size_t size, const size_t width, const size_t height, const T* ptr)
-    : cuda_unique_ptr<T>(size, ptr), m_width(width), m_height(height) {
+    : cuda_unique_ptr<T>(size, ptr), width(width), height(height) {
 }
 
 
 template <typename T>
 cuda_unique_2d<T>::cuda_unique_2d(cuda_unique_2d<T>&& rhs) noexcept: cuda_unique_ptr<T>(rhs) {
-    m_width = rhs.m_width;
-    m_height = rhs.m_height;
+    width = rhs.width;
+    height = rhs.height;
 }
 
 template <typename T>
 cuda_unique_2d<T> cuda_unique_2d<T>::operator=(cuda_unique_2d<T>&& rhs) noexcept {
     return cuda_unique_2d<T>(rhs);
-}
-
-template <typename T>
-T& cuda_unique_2d<T>::at(const int x, const int y) {
-    return m_ptr[y * m_width + x];
 }
 
 // make cuda 2d
@@ -242,8 +229,8 @@ static cuda_unique_2d<T> make_cuda_2d(const std::vector<T>& vec, const int width
 
 // Cuda unique to vector, cuda device may actually not be necessary anymore
 template<typename T>
-static std::vector<T> cuda_unique_to_vector(const size_t size, const cuda_unique_ptr<T>& ptr) {
-    const auto temp = make_cuda_device(size, ptr.get());
+static std::vector<T> cuda_unique_to_vector(const cuda_unique_ptr<T>& ptr) {
+    const auto temp = internal::make_cuda_device(ptr.size, ptr.get());
     return std::vector<T>(temp.begin(), temp.end());
 }
 
@@ -255,26 +242,11 @@ using grid = std::vector<std::vector<T>>;
 template <typename T>
 grid<T> make_grid(const int width, const int height, const T val) {
     grid<T> g;
-    //g.assign(height, std::vector<T>());
     g.resize(height);
     for (auto& sub : g) {
         sub.assign(width, val);
     }
     return g;
-}
-
-template <typename T>
-cuda_unique_ptr<T> grid_to_cuda_unique(const grid<T>& grid) {
-    auto total_size = 0;
-    for (const auto& sub : grid) {
-        total_size += sub.size();
-    }
-    std::vector<T> temp;
-    temp.reserve(total_size);
-    for (const auto& sub : grid) {
-        temp.insert(temp.end(), sub.begin(), sub.end());
-    }
-    return make_cuda_unique<T>(total_size, temp.data());
 }
 
 template <typename T>
@@ -294,13 +266,13 @@ cuda_unique_2d<T> grid_to_cuda_2d(const grid<T>& grid) {
 }
 
 template <typename T>
-grid<T> cuda_2d_to_grid(const int width, const int height, const cuda_unique_2d<T>& cuda_ptr) {
+grid<T> cuda_2d_to_grid(const cuda_unique_2d<T>& cuda_ptr) {
     auto ret = grid<T>{};
-    ret.resize(height);
-    auto tmp = make_cuda_device(width * height, cuda_ptr.get());
+    ret.resize(cuda_ptr.height);
+    auto tmp = internal::make_cuda_device(cuda_ptr.m_width * cuda_ptr.height, cuda_ptr.get());
     auto ptr = tmp.get();
-    for (auto i = 0; i < width; ++i) {
-        std::copy(&ptr[width * i], &ptr[width * i] + width, std::back_inserter(ret[i]));
+    for (auto i = 0; i < cuda_ptr.width; ++i) {
+        std::copy(&ptr[cuda_ptr.width * i], &ptr[cuda_ptr.width * i] + cuda_ptr.width, std::back_inserter(ret[i]));
     }
     return ret;
 }
