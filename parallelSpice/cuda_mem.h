@@ -9,12 +9,6 @@
 #include <iostream>
 #include <vector>
 
-#ifdef __CUDACC__
-#define DEVICE_CALLABLE __host__ __device__ __forceinline__
-#else
-#define DEVICE_CALLABLE
-#endif
-
 /*
  * CUDA smart pointers
  *
@@ -33,8 +27,8 @@ class cuda_unique_ptr {
 public:
     cuda_unique_ptr(size_t size, const T* ptr);
 
-    //cuda_unique_ptr(const cuda_unique_ptr&) = delete;
-    //cuda_unique_ptr operator=(const cuda_unique_ptr&) = delete;
+    cuda_unique_ptr(const cuda_unique_ptr&) = delete;
+    cuda_unique_ptr operator=(const cuda_unique_ptr&) = delete;
 
     // Transfer ownership of the memory, 
     cuda_unique_ptr(cuda_unique_ptr<T>&&) noexcept;
@@ -42,7 +36,7 @@ public:
 
     ~cuda_unique_ptr();
 
-    DEVICE_CALLABLE T& operator[](int index);
+    T& operator[](int index);
     T operator->() const noexcept;
     T operator*() const noexcept;
     T* get() const noexcept;
@@ -88,7 +82,7 @@ cuda_unique_ptr<T>::~cuda_unique_ptr() {
 }
 
 template <typename T>
-DEVICE_CALLABLE T& cuda_unique_ptr<T>::operator[](const int index) {
+T& cuda_unique_ptr<T>::operator[](const int index) {
     // warning: doesn't check bounds
     return m_ptr[index];
 }
@@ -150,7 +144,7 @@ template<typename T>
 cuda_device_ptr<T>::cuda_device_ptr(const size_t size, const T* ptr) {
     m_size = size;
     m_ptr = new T[size];
-    cudaMemcpy(m_ptr, ptr, size, cudaMemcpyDeviceToHost);
+    cudaMemcpy(m_ptr, ptr, size * sizeof(T), cudaMemcpyDeviceToHost);
 }
 
 template<typename T>
@@ -206,13 +200,13 @@ class cuda_unique_2d : public cuda_unique_ptr<T> {
 public:
     cuda_unique_2d(size_t size, size_t width, size_t height, const T* ptr);
     
-    //cuda_unique_2d(const cuda_unique_2d&) = delete;
-    //cuda_unique_2d operator=(const cuda_unique_2d&) = delete;
+    cuda_unique_2d(const cuda_unique_2d&) = delete;
+    cuda_unique_2d operator=(const cuda_unique_2d&) = delete;
     
     cuda_unique_2d(cuda_unique_2d<T>&& rhs) noexcept;
     cuda_unique_2d operator=(cuda_unique_2d<T>&& rhs) noexcept;
 
-    DEVICE_CALLABLE T& at(int x, int y);
+    T& at(int x, int y);
 private:
     size_t m_width;
     size_t m_height;
@@ -236,7 +230,7 @@ cuda_unique_2d<T> cuda_unique_2d<T>::operator=(cuda_unique_2d<T>&& rhs) noexcept
 }
 
 template <typename T>
-DEVICE_CALLABLE T& cuda_unique_2d<T>::at(const int x, const int y) {
+T& cuda_unique_2d<T>::at(const int x, const int y) {
     return m_ptr[y * m_width + x];
 }
 

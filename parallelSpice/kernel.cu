@@ -12,41 +12,41 @@
 cudaError_t solve(json::parse_result& data);
 void choleskyDecomposition(double* A, double* L, int dim);
 
-//__global__ void choleskyTimepointSolverKernel(double* A, double* L, double* bs, double* y, double* xs, int dim) {
-//	const auto time_point = blockIdx.x * blockDim.x + threadIdx.x;//	const auto b = &bs[time_point * dim];//	auto accumulator = 0.0;////	// Reset y to 0//	for (auto i = 0; i < dim; i++)//	{//		y[i] = 0.0;//	}////	// Solve Ly = b//	for (auto i = 0; i < dim; i++)//	{//		accumulator = 0.0;////		for (auto j = 0; j < i; j++)//		{//			accumulator += L[i * dim + j] * y[j];//		}////		y[i] = (b[i] - accumulator) / L[i * dim + i];//	}//
-//	// Solve (L_T)x = y
-//	for (auto i = dim - 1; i < 0; i--)
-//	{
-//		accumulator = 0.0;
-//		for (auto j = i + 1; j < dim; j++)
-//		{
-//			accumulator += L[j * dim + i] * xs[time_point * dim + j];
-//		}
-//		
-//		xs[time_point * dim + i] = (y[i] - accumulator) / L[i * dim + i];
-//	}
-//}
+__global__ void choleskyTimepointSolverKernel(double* A, double* L, double* bs, double* y, double* xs, int dim) {
+	const auto time_point = blockIdx.x * blockDim.x + threadIdx.x;
+	const auto b = &bs[time_point * dim];
+	auto accumulator = 0.0;
 
-template <int N, int M>
-__global__ void test_kernel(cuda_mem::cuda_unique_2d<float>* ptr1, cuda_mem::cuda_unique_ptr<float>* ptr2, const int n_threads) {
-    const auto idx = blockIdx.x * blockDim.x * threadIdx.x;
-    (*ptr2)[idx] = 69.f;
-    
-    const auto start_i = idx * N;
-    auto n_i = N / n_threads;
-    const auto i_extra = N % n_threads;
-    if (idx == n_threads - 1) n_i += i_extra;
-    
-    const auto start_j = idx * M;
-    auto n_j = M / n_threads;
-    const auto j_extra = M % n_threads;
-    if (idx == n_threads - 1) n_j += j_extra;
-    
-    for (auto i = start_i; i < start_i + n_i; ++i) {
-        for (auto j = start_j; j < start_j + n_j; ++j) {
-            ptr1->at(i, j) = 69.f;
-        }
-    }
+	// Reset y to 0
+	for (auto i = 0; i < dim; i++)
+	{
+		y[i] = 0.0;
+	}
+
+	// Solve Ly = b
+	for (auto i = 0; i < dim; i++)
+	{
+		accumulator = 0.0;
+
+		for (auto j = 0; j < i; j++)
+		{
+			accumulator += L[i * dim + j] * y[j];
+		}
+
+		y[i] = (b[i] - accumulator) / L[i * dim + i];
+	}
+
+	// Solve (L_T)x = y
+	for (auto i = dim - 1; i < 0; i--)
+	{
+		accumulator = 0.0;
+		for (auto j = i + 1; j < dim; j++)
+		{
+			accumulator += L[j * dim + i] * xs[time_point * dim + j];
+		}
+		
+		xs[time_point * dim + i] = (y[i] - accumulator) / L[i * dim + i];
+	}
 }
 
 // Perform Cholesky decomposition
@@ -87,22 +87,10 @@ int main(const int argc, char* argv[]) {
     auto parser = json::JsonParser(file_path);
     if (!parser.parse(result)) {
         exit(1);
-    }
-    
-    // TESTING A THING
-    auto g = cuda_mem::make_grid<float>(3, 3, 0.f);
-    auto v = std::vector<float>{};
-    v.assign(9, 0.f);
-    auto g_device = cuda_mem::grid_to_cuda_2d(g);
-    auto v_device = cuda_mem::make_cuda_unique(v);
-    test_kernel<3, 3> <<<1, 3>>> (&g_device, &v_device, 3);
-    v = cuda_mem::cuda_unique_to_vector(9, v_device);
-    g = cuda_mem::cuda_2d_to_grid(3, 3, g_device);
-    // END OF TESTING A THING
-    
+    }    
     
     // Solve.
-    auto cudaStatus = solve(result);
+	auto cudaStatus = solve(result);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "solve failed!");
         return 1;
