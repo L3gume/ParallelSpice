@@ -24,11 +24,11 @@ std::vector<double> computeCoefficientMatrix(std::vector<std::vector<double>> A,
 __global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double* Bs, double* Xs, double* Y, double* J, double* E, double* VF, double* IF, double* temp_generator, double* temp_solver, const int n, const int m, const double delta_T) {
 	const auto time_point = blockIdx.x * blockDim.x + threadIdx.x;
 	const auto B = &Bs[time_point * m];
-	const auto temp_G = &temp_generator[time_point * m];
+	const auto temp_G = &temp_generator[time_point * n];
 	const auto temp_S = &temp_solver[time_point * m];
 	
 	// Calculate J - YE taking VF and IF into account
-	for (auto i = 0; i < m; i++)
+	for (auto i = 0; i < n; i++)
 	{
 		temp_G[i] = (J[i] * cos(2 * M_PI * IF[i] * time_point * delta_T)) - Y[i] * E[i] * cos(2 * M_PI * VF[i] * time_point * delta_T);
 	}
@@ -39,7 +39,7 @@ __global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double*
 		auto sum = 0.0;
 		for (auto j = 0; j < n; j++)
 		{
-			sum += A[i * m + j] * temp_G[i];
+			sum += A[i * n + j] * temp_G[j];
 		}
 
 		// Store in B
@@ -196,7 +196,7 @@ cudaError_t solve(json::parse_result& data, std::string out_path) {
 	std::vector<double> Bs(num_timepoints * data.m, 0.0);
 	std::vector<double> Xs(num_timepoints * data.m, 0.0);
 	std::vector<double> temp_solver(num_timepoints * data.m, 0.0);
-	std::vector<double> temp_generator(num_timepoints * data.m, 0.0);
+	std::vector<double> temp_generator(num_timepoints * data.n, 0.0);
 
 	// Get coefficient matrix
 	auto S = computeCoefficientMatrix(data.A, data.Y, data.n, data.m);
