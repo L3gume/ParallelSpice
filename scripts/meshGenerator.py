@@ -56,8 +56,8 @@ VF[-2] = frequencies[0]
 
 # save here A,Y,J,E,VF,IF
 data = {}
-data['N'] = size[0]
-data['M'] = size[1]
+data['N'] = len(A)
+data['M'] = len(A[0])
 data['A'] = A
 data['Y'] = Y
 data['E'] = E
