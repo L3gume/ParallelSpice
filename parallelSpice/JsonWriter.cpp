@@ -14,7 +14,7 @@ _Check_return_ bool JsonWriter::write(const float timestep, const cuda_mem::grid
 	m_doc.SetObject();
 
 	m_doc.AddMember(rapidjson::GenericStringRef<char>("timestep"), timestep, m_doc.GetAllocator());
-	m_doc.AddMember(rapidjson::GenericStringRef<char>("n_entries"), grid.size, m_doc.GetAllocator());
+	m_doc.AddMember(rapidjson::GenericStringRef<char>("n_entries"), grid.size(), m_doc.GetAllocator());
 
 	rapidjson::Document entries(&m_doc.GetAllocator());
 	entries.SetArray();
@@ -30,7 +30,7 @@ _Check_return_ bool JsonWriter::write(const float timestep, const cuda_mem::grid
 }
 
 _Check_return_ bool JsonWriter::write_grid(rapidjson::Value& doc, const cuda_mem::grid<double>& grid) {
-	if (!doc.IsArray) return false;
+	if (!doc.IsArray()) return false;
 
 	for (const auto& vec : grid) {
 		auto arr = write_vec(vec, m_doc.GetAllocator());

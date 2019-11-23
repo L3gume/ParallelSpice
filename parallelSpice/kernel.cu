@@ -355,12 +355,12 @@ cudaError_t solve(json::parse_result& data) {
 	cuda_utils::divide_threads_into_blocks(num_timepoints, num_blocks, num_threads);
 
 	// Generate Bs and sovle for Xs
-	bTimepointGeneratorAndSolverKernel << <num_blocks, num_threads >> > (dev_A, dev_L, dev_Bs, dev_Xsdev_Y, dev_J, dev_E, dev_F, dev_temp_generator, dev_temp_solver, data.n, data.m, T_max, num_timepoints);
+	bTimepointGeneratorAndSolverKernel << <num_blocks, num_threads >> > (dev_A, dev_L, dev_Bs, dev_Xs, dev_Y, dev_J, dev_E, dev_F, dev_temp_generator, dev_temp_solver, data.n, data.m, T_max, num_timepoints);
 
 	// Check for any errors launching the kernel
 	cudaStatus = cudaGetLastError();
 	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "bTimepointGeneratorKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
+		fprintf(stderr, "bTimepointGeneratorAndSolverKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
 		goto Error;
 	}
 
