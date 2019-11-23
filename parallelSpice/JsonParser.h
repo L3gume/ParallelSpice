@@ -15,7 +15,8 @@ struct parse_result {
     std::vector<double> J;
     std::vector<double> Y;
     std::vector<double> E;
-    std::vector<double> F;
+    std::vector<double> VF;
+    std::vector<double> IF;
 
     size_t n;
     size_t m;
