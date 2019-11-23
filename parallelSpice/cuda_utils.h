@@ -13,7 +13,7 @@ static constexpr auto thread_limit = 1024;
 inline void divide_threads_into_blocks(const int n_threads, int& blocks, int& threads) {
     blocks = 1;
     threads = n_threads;
-    while (n_threads > thread_limit) {
+    while (threads > thread_limit) {
         blocks *= 2;
         threads /= 2;
     }
