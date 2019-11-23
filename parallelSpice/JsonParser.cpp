@@ -36,10 +36,6 @@ _Check_return_ bool JsonParser::parse(parse_result& result) {
     if (!m_doc.HasMember("M")) return false;
     result.m = m_doc["M"].GetInt();
 
-    // Get the number of time points
-    if (!m_doc.HasMember("timepoints")) return false;
-    result.timepoints = m_doc["timepoints"].GetInt();
-    
     // parse the A matrix
     if (!m_doc.HasMember("A")) return false;
     const auto& a_doc = m_doc["A"];
@@ -60,10 +56,15 @@ _Check_return_ bool JsonParser::parse(parse_result& result) {
     const auto& e_doc = m_doc["E"];
     if (!parse_vector(e_doc, result.E)) return false;
     
-    // parse the F Vector
-    if (!m_doc.HasMember("F")) return false;
-    const auto& f_doc = m_doc["F"];
-    if (!parse_vector(f_doc, result.F)) return false;
+    // parse the VF Vector
+    if (!m_doc.HasMember("VF")) return false;
+    const auto& vf_doc = m_doc["VF"];
+    if (!parse_vector(vf_doc, result.VF)) return false;
+
+	// parse the IF Vector
+	if (!m_doc.HasMember("IF")) return false;
+	const auto& if_doc = m_doc["IF"];
+	if (!parse_vector(if_doc, result.IF)) return false;
 
     // Successfully reached the end
     return true;

@@ -32,7 +32,7 @@ __device__ uint8_t clamp_val_to_uint8(T val) {
     return static_cast<uint8_t>(val > min ? (val < max ? val : max) : min);
 }
 
-inline std::string make_output_file(const std::string& in_file, const std::string& suffix, const std::string& extension = "png") {
+inline std::string make_output_file(const std::string& in_file, const std::string& suffix, const std::string& extension) {
     const auto last_index = in_file.find_last_of(".");
     const auto raw_name = in_file.substr(0, last_index);
     return raw_name + suffix + "." + extension;
