@@ -16,16 +16,16 @@
 constexpr auto BASE_RATE = 20.0;
 
 cudaError_t solve(json::parse_result& data, std::string out_path);
-std::vector<double> choleskyDecomposition(std::vector<double> S, const int n);
+std::vector<double> choleskyDecomposition(std::vector<double> S, const int m);
 std::vector<double> computeCoefficientMatrix(std::vector<std::vector<double>> A, std::vector<double> Y, const int n, const int m);
 
 // Genereates a set of Bs where B_i is the forcing function at a timepoint.
 // Returns X_is where Xs are node voltages associated with different timepoints based on the generated B_is.
 __global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double* Bs, double* Xs, double* Y, double* J, double* E, double* VF, double* IF, double* temp_generator, double* temp_solver, const int n, const int m, const double delta_T) {
 	const auto time_point = blockIdx.x * blockDim.x + threadIdx.x;
-	const auto B = &Bs[time_point * n];
-	const auto temp_G = &temp_generator[time_point * n];
-	const auto temp_S = &temp_solver[time_point * n];
+	const auto B = &Bs[time_point * m];
+	const auto temp_G = &temp_generator[time_point * m];
+	const auto temp_S = &temp_solver[time_point * m];
 	
 	// Calculate J - YE taking VF and IF into account
 	for (auto i = 0; i < m; i++)
@@ -34,12 +34,12 @@ __global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double*
 	}
 
 	// Multiply A by output
-	for (auto i = 0; i < n; i++)
+	for (auto i = 0; i < m; i++)
 	{
 		auto sum = 0.0;
-		for (auto j = 0; j < m; j++)
+		for (auto j = 0; j < n; j++)
 		{
-			sum += A[i * n + j] * temp_G[j];
+			sum += A[i * m + j] * temp_G[i];
 		}
 
 		// Store in B
@@ -49,54 +49,54 @@ __global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double*
 	auto accumulator = 0.0;
 
 	// Solve L*temp_solver = b
-	for (auto i = 0; i < n; i++)
+	for (auto i = 0; i < m; i++)
 	{
 		accumulator = 0.0;
 
 		for (auto j = 0; j < i; j++)
 		{
-			accumulator += L[i * n + j] * temp_S[j];
+			accumulator += L[i * m + j] * temp_S[j];
 		}
 
-		temp_S[i] = (B[i] - accumulator) / L[i * n + i];
+		temp_S[i] = (B[i] - accumulator) / L[i * m + i];
 	}
 
 	// Solve (L_T)x = temp_solver
-	const auto X = &Xs[time_point * n];
-	for (auto i = n - 1; i >= 0; i--)
+	const auto X = &Xs[time_point * m];
+	for (auto i = m - 1; i >= 0; i--)
 	{
 		accumulator = 0.0;
-		for (auto j = i + 1; j < n; j++)
+		for (auto j = i + 1; j < m; j++)
 		{
-			accumulator += L[j * n + i] * X[j];
+			accumulator += L[j * m + i] * X[j];
 		}
 
-		X[i] = (temp_S[i] - accumulator) / L[i * n + i];
+		X[i] = (temp_S[i] - accumulator) / L[i * m + i];
 	}
 }
 
 // Perform Cholesky decomposition
-std::vector<double> choleskyDecomposition(std::vector<double> S, const int n) {
-	std::vector<double> L(n * n, 0.0);
+std::vector<double> choleskyDecomposition(std::vector<double> S, const int m) {
+	std::vector<double> L(m * m, 0.0);
 	auto accumulator = 0.0;
 
-	for (auto i = 0; i < n; i++)
+	for (auto i = 0; i < m; i++)
 	{
 		for (auto j = 0; j < (i + 1); j++)
 		{
 			accumulator = 0.0;
 			for (auto k = 0; k < j; k++)
 			{
-				accumulator += L[i * n + k] * L[j * n + k];
+				accumulator += L[i * m + k] * L[j * m + k];
 			}
 
 			if (i == j)
 			{
-				L[i * n + j] = sqrt(S[i * n + i] - accumulator);
+				L[i * m + j] = sqrt(S[i * m + i] - accumulator);
 			}
 			else
 			{
-				L[i * n + j] = (1.0 / L[j * n + j]) * (S[i * n + j] - accumulator);
+				L[i * m + j] = (1.0 / L[j * m + j]) * (S[i * m + j] - accumulator);
 			}
 		}
 	}
@@ -113,24 +113,24 @@ std::vector<double> computeCoefficientMatrix(std::vector<std::vector<double>> A,
 	{
 		for (auto j = 0; j < n; j++)
 		{
-			temp[i * m + j] = A[i][j] * Y[j];
+			temp[i * n + j] = A[i][j] * Y[j];
 		}
 	}
 
-	std::vector<double> output(n * n, 0.0);
+	std::vector<double> output(m * m, 0.0);
 
-	// Multiply Y by transpose of A
+	// Multiply AY by transpose of A
 	for (auto i = 0; i < m; i++)
 	{
-		for (auto j = 0; j < n; j++)
+		for (auto j = 0; j < m; j++)
 		{
 			auto sum = 0.0;
-			for (auto k = 0; k < m; k++)
+			for (auto k = 0; k < n; k++)
 			{
-				sum += A[k][i] * temp[k * m + j];
+				sum += A[i][k] * temp[j * n + k];
 			}
 
-			output[i * n + j] = sum;
+			output[i * m + j] = sum;
 		}
 	}
 
@@ -193,16 +193,16 @@ cudaError_t solve(json::parse_result& data, std::string out_path) {
 	auto delta_T = T_min / BASE_RATE;
 	auto num_timepoints = static_cast<int>((T_max / T_min) / delta_T);
 	
-	std::vector<double> Bs(num_timepoints * data.n, 0.0);
-	std::vector<double> Xs(num_timepoints * data.n, 0.0);
-	std::vector<double> temp_solver(num_timepoints * data.n, 0.0);
-	std::vector<double> temp_generator(num_timepoints * data.n, 0.0);
+	std::vector<double> Bs(num_timepoints * data.m, 0.0);
+	std::vector<double> Xs(num_timepoints * data.m, 0.0);
+	std::vector<double> temp_solver(num_timepoints * data.m, 0.0);
+	std::vector<double> temp_generator(num_timepoints * data.m, 0.0);
 
 	// Get coefficient matrix
 	auto S = computeCoefficientMatrix(data.A, data.Y, data.n, data.m);
 		
 	// Perform Cholesky decomposition
-	auto L = choleskyDecomposition(S, data.n);
+	auto L = choleskyDecomposition(S, data.m);
 
 	const auto& device_a = cuda_mem::grid_to_cuda_2d(data.A);
 	const auto& device_l = cuda_mem::vec_to_cuda_unique(L);
@@ -250,14 +250,14 @@ cudaError_t solve(json::parse_result& data, std::string out_path) {
 	
 	// PERFORM SANITY CHECK
 	// Get Sx for verification
-	std::vector<double> S_times_X(num_timepoints * data.n, 0.0);
+	std::vector<double> S_times_X(num_timepoints * data.m, 0.0);
 	for (auto t = 0; t < num_timepoints; t++)
 	{
-		for (auto i = 0; i < data.n; i++)
+		for (auto i = 0; i < data.m; i++)
 		{
-			for (auto j = 0; j < data.n; j++)
+			for (auto j = 0; j < data.m; j++)
 			{
-				S_times_X[t * data.n + i] += S[i * data.n + j] * X_solution[t * data.n + j];
+				S_times_X[t * data.m + i] += S[i * data.m + j] * X_solution[t * data.m + j];
 			}
 		}
 	}
@@ -266,9 +266,9 @@ cudaError_t solve(json::parse_result& data, std::string out_path) {
 	auto error = 0.0;
 	for (auto i = 0; i < num_timepoints; i++)
 	{
-		for (auto j = 0; j < data.n; j++)
+		for (auto j = 0; j < data.m; j++)
 		{
-			error += S_times_X[i * data.n + j] - Bs[i * data.n + j];
+			error += S_times_X[i * data.m + j] - Bs[i * data.m + j];
 		}
 	}
 	printf("Sanity: %lf", error);
@@ -277,7 +277,7 @@ cudaError_t solve(json::parse_result& data, std::string out_path) {
 	auto out_grid = cuda_mem::grid<double>();
 	for (auto i = 0; i < num_timepoints; i++)
 	{
-		out_grid.emplace_back(std::vector<double>(&X_solution[i * data.n], &X_solution[i * data.n] + data.n));
+		out_grid.emplace_back(std::vector<double>(&X_solution[i * data.m], &X_solution[i * data.m] + data.m));
 	}
 
 	// Write to json file
