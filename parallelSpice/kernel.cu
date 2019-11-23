@@ -16,41 +16,9 @@ cudaError_t solve(json::parse_result& data);
 std::vector<double> choleskyDecomposition(std::vector<double> S, const int n);
 std::vector<double> computeCoefficientMatrix(std::vector<std::vector<double>> A, std::vector<double> Y, const int n, const int m);
 
-// Returns X_is where Xs are the node voltages associated with different timepoints
-__global__ void choleskyTimepointSolverKernel(double* L, double* Bs, double* temp_solver, double* Xs, const int n) {
-	const auto time_point = blockIdx.x * blockDim.x + threadIdx.x;
-	const auto b = &Bs[time_point * n];
-	auto accumulator = 0.0;
-
-	// Solve L*temp_solver = b
-	for (auto i = 0; i < n; i++)
-	{
-		accumulator = 0.0;
-
-		for (auto j = 0; j < i; j++)
-		{
-			accumulator += L[i * n + j] * temp_solver[j];
-		}
-
-		temp_solver[i] = (b[i] - accumulator) / L[i * n + i];
-	}
-
-	// Solve (L_T)x = temp_solver
-	const auto X = &Xs[time_point * n];
-	for (auto i = n - 1; i >= 0; i--)
-	{
-		accumulator = 0.0;
-		for (auto j = i + 1; j < n; j++)
-		{
-			accumulator += L[j * n + i] * X[j];
-		}
-		
-		X[i] = (temp_solver[i] - accumulator) / L[i * n + i];
-	}
-}
-
-// Returns a set of Bs where B_i is the forcing function at a timepoint
-__global__ void bTimepointGeneratorKernel(double* A, double* Bs, double* Y, double* J, double* E, double* F, double* temp_generator, const int n, const int m, const int T_max, const int num_samples) {
+// Genereates a set of Bs where B_i is the forcing function at a timepoint.
+// Returns X_is where Xs are node voltages associated with different timepoints based on the generated B_is.
+__global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double* Bs, double* Xs, double* Y, double* J, double* E, double* F, double* temp_generator, double* temp_solver, const int n, const int m, const int T_max, const int num_samples) {
 	const auto time_point = blockIdx.x * blockDim.x + threadIdx.x;
 	const auto B = &Bs[time_point * n];
 	
@@ -71,6 +39,34 @@ __global__ void bTimepointGeneratorKernel(double* A, double* Bs, double* Y, doub
 
 		// Store in B
 		B[i] = sum;
+	}
+
+	auto accumulator = 0.0;
+
+	// Solve L*temp_solver = b
+	for (auto i = 0; i < n; i++)
+	{
+		accumulator = 0.0;
+
+		for (auto j = 0; j < i; j++)
+		{
+			accumulator += L[i * n + j] * temp_solver[j];
+		}
+
+		temp_solver[i] = (B[i] - accumulator) / L[i * n + i];
+	}
+
+	// Solve (L_T)x = temp_solver
+	const auto X = &Xs[time_point * n];
+	for (auto i = n - 1; i >= 0; i--)
+	{
+		accumulator = 0.0;
+		for (auto j = i + 1; j < n; j++)
+		{
+			accumulator += L[j * n + i] * X[j];
+		}
+
+		X[i] = (temp_solver[i] - accumulator) / L[i * n + i];
 	}
 }
 
@@ -143,6 +139,8 @@ int main(const int argc, char* argv[]) {
         parallelSpice.exe [json file path])" << '\n';
         exit(1);
     }
+	
+	// Parse json file with circuit configuration
     const auto file_path = std::string{argv[1]};
     auto result = json::parse_result{};
     auto parser = json::JsonParser(file_path);
@@ -171,7 +169,7 @@ int main(const int argc, char* argv[]) {
 
 cudaError_t solve(json::parse_result& data) {
 	const auto T_max = static_cast<int>(*std::max_element(data.F.data(), data.F.data() + data.F.size()));
-	auto num_timepoints = 2 * std::max(1, T_max); // Set num_timepoints as 10*MAX(F)
+	auto num_timepoints = 2 * std::max(1, T_max); // Set num_timepoints as 2*MAX(F)
 	
 	std::vector<double> Bs(num_timepoints * data.n, 0.0);
 	std::vector<double> Xs(num_timepoints * data.n, 0.0);
@@ -356,8 +354,8 @@ cudaError_t solve(json::parse_result& data) {
 	int num_threads = 0;
 	cuda_utils::divide_threads_into_blocks(num_timepoints, num_blocks, num_threads);
 
-	// Generate Bs
-	bTimepointGeneratorKernel << <num_blocks, num_threads >> > (dev_A, dev_Bs, dev_Y, dev_J, dev_E, dev_F, dev_temp_generator, data.n, data.m, T_max, num_timepoints);
+	// Generate Bs and sovle for Xs
+	bTimepointGeneratorAndSolverKernel << <num_blocks, num_threads >> > (dev_A, dev_L, dev_Bs, dev_Xsdev_Y, dev_J, dev_E, dev_F, dev_temp_generator, dev_temp_solver, data.n, data.m, T_max, num_timepoints);
 
 	// Check for any errors launching the kernel
 	cudaStatus = cudaGetLastError();
@@ -371,38 +369,6 @@ cudaError_t solve(json::parse_result& data) {
 	cudaStatus = cudaDeviceSynchronize();
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching bTimepointGeneratorKernel!\n", cudaStatus);
-		goto Error;
-	}
-
-	// Copy output vector from GPU buffer to host memory.
-	cudaStatus = cudaMemcpy(Bs.data(), dev_Bs, num_timepoints * data.n * sizeof(double), cudaMemcpyDeviceToHost);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy from dev_Bs to Bs failed!");
-		goto Error;
-	}
-
-	// Copy input vectors from host memory to GPU buffers.
-	cudaStatus = cudaMemcpy(dev_Bs, Bs.data(), num_timepoints * data.n * sizeof(double), cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy from Bs to dev_Bs failed!");
-		goto Error;
-	}
-
-	// Perform solver for each timepoint
-	choleskyTimepointSolverKernel<<<num_blocks, num_threads >>>(dev_L, dev_Bs, dev_temp_solver, dev_Xs, data.n);
-
-	// Check for any errors launching the kernel
-	cudaStatus = cudaGetLastError();
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "choleskyTimepointSolverKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-		goto Error;
-	}
-
-	// cudaDeviceSynchronize waits for the kernel to finish, and returns
-	// any errors encountered during the launch.
-	cudaStatus = cudaDeviceSynchronize();
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching choleskyTimepointSolverKernel!\n", cudaStatus);
 		goto Error;
 	}
 
