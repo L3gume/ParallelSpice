@@ -31,7 +31,6 @@ __global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double*
 	for (auto i = 0; i < m; i++)
 	{
 		temp_G[i] = (J[i] * cos(2 * M_PI * IF[i] * time_point * delta_T)) - Y[i] * E[i] * cos(2 * M_PI * VF[i] * time_point * delta_T);
-		printf("TIMEPOINT * DELTA_T: %lf\n", temp_G[i]);
 	}
 
 	// Multiply A by output
@@ -246,29 +245,30 @@ cudaError_t solve(json::parse_result& data, std::string out_path) {
 		return cudaStatus;
 	}
 
-	auto solution = cuda_mem::cuda_unique_to_vector(device_xs);
+	// Get solution for X from device
+	auto X_solution = cuda_mem::cuda_unique_to_vector(device_xs);
 	
-	std::vector<double> temp(num_timepoints * data.n, 0.0);
+	// PERFORM SANITY CHECK
+	// Get Sx for verification
+	std::vector<double> S_times_X(num_timepoints * data.n, 0.0);
 	for (auto t = 0; t < num_timepoints; t++)
 	{
 		for (auto i = 0; i < data.n; i++)
 		{
 			for (auto j = 0; j < data.n; j++)
 			{
-				temp[t * data.n + i] += S[i * data.n + j] * solution[t * data.n + j];
+				S_times_X[t * data.n + i] += S[i * data.n + j] * X_solution[t * data.n + j];
 			}
 		}
 	}
-	
-	auto sanity = cuda_mem::cuda_unique_to_vector(device_bs);
-
-	// Print timepoints
+	Bs = cuda_mem::cuda_unique_to_vector(device_bs);
+	// Verify that Sx = b and print error
 	auto error = 0.0;
 	for (auto i = 0; i < num_timepoints; i++)
 	{
 		for (auto j = 0; j < data.n; j++)
 		{
-			error += temp[i * data.n + j] - sanity[i * data.n + j];
+			error += S_times_X[i * data.n + j] - Bs[i * data.n + j];
 		}
 	}
 	printf("Sanity: %lf", error);
@@ -277,9 +277,10 @@ cudaError_t solve(json::parse_result& data, std::string out_path) {
 	auto out_grid = cuda_mem::grid<double>();
 	for (auto i = 0; i < num_timepoints; i++)
 	{
-		out_grid.emplace_back(std::vector<double>(&solution[i * data.n], &solution[i * data.n] + data.n));
+		out_grid.emplace_back(std::vector<double>(&X_solution[i * data.n], &X_solution[i * data.n] + data.n));
 	}
 
+	// Write to json file
 	auto writer = json::JsonWriter(out_path);
 	if (!writer.write(delta_T, out_grid)) {
 		return cudaError(1);
