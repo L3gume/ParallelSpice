@@ -3,7 +3,7 @@ import json
 import matplotlib.pyplot as plt
 
 #### change path to desired output
-json_path = '../mesh_files/test_output.json'
+json_path = '../scripts/circuit_output.json'
 
 #### change node to desired node
 node = 0
