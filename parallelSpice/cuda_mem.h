@@ -111,7 +111,7 @@ public:
     T* get() const noexcept;
     void release() noexcept;
 
-    size_t size = 0;
+    size_t buf_size = 0;
 protected:
 	T* m_ptr;
 	cudaError_t m_last_error;
@@ -119,7 +119,7 @@ protected:
 
 template <typename T>
 cuda_unique_ptr<T>::cuda_unique_ptr(const size_t size, const T* ptr) {
-    size = size;
+    buf_size = size;
     m_ptr = nullptr;
     m_last_error = cudaMallocManaged(reinterpret_cast<void**>(&m_ptr), size * sizeof(T));
     assert(m_last_error == cudaSuccess);
@@ -132,11 +132,11 @@ cuda_unique_ptr<T>::cuda_unique_ptr(const size_t size, const T* ptr) {
 template <typename T>
 cuda_unique_ptr<T>::cuda_unique_ptr(cuda_unique_ptr&& rhs) noexcept {
     m_ptr = nullptr;
-    size = rhs.size;
-    m_last_error = cudaMallocManaged(reinterpret_cast<void**>(&m_ptr), size * sizeof(T));
+    buf_size = rhs.buf_size;
+    m_last_error = cudaMallocManaged(reinterpret_cast<void**>(&m_ptr), buf_size * sizeof(T));
     assert(m_last_error == cudaSuccess);
 
-    std::copy(&rhs.m_ptr[0], &rhs.m_ptr[0] + size, m_ptr);
+    std::copy(&rhs.m_ptr[0], &rhs.m_ptr[0] + buf_size, m_ptr);
     rhs.release();
 }
 
@@ -230,7 +230,7 @@ static cuda_unique_2d<T> make_cuda_2d(const std::vector<T>& vec, const int width
 // Cuda unique to vector, cuda device may actually not be necessary anymore
 template<typename T>
 static std::vector<T> cuda_unique_to_vector(const cuda_unique_ptr<T>& ptr) {
-    const auto temp = internal::make_cuda_device(ptr.size, ptr.get());
+    const auto temp = internal::make_cuda_device(ptr.buf_size, ptr.get());
     return std::vector<T>(temp.begin(), temp.end());
 }
 
@@ -269,7 +269,7 @@ template <typename T>
 grid<T> cuda_2d_to_grid(const cuda_unique_2d<T>& cuda_ptr) {
     auto ret = grid<T>{};
     ret.resize(cuda_ptr.height);
-    auto tmp = internal::make_cuda_device(cuda_ptr.m_width * cuda_ptr.height, cuda_ptr.get());
+    auto tmp = internal::make_cuda_device(cuda_ptr.width * cuda_ptr.height, cuda_ptr.get());
     auto ptr = tmp.get();
     for (auto i = 0; i < cuda_ptr.width; ++i) {
         std::copy(&ptr[cuda_ptr.width * i], &ptr[cuda_ptr.width * i] + cuda_ptr.width, std::back_inserter(ret[i]));

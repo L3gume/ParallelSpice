@@ -9,23 +9,24 @@
 #include <string>
 #include <iostream>
 #include "JsonParser.h"
+#include "JsonWriter.h"
 #include "dbg.h"
 #include "cuda_utils.h"
 
-cudaError_t solve(json::parse_result& data);
+cudaError_t solve(json::parse_result& data, std::string out_path);
 std::vector<double> choleskyDecomposition(std::vector<double> S, const int n);
 std::vector<double> computeCoefficientMatrix(std::vector<std::vector<double>> A, std::vector<double> Y, const int n, const int m);
 
 // Genereates a set of Bs where B_i is the forcing function at a timepoint.
 // Returns X_is where Xs are node voltages associated with different timepoints based on the generated B_is.
-__global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double* Bs, double* Xs, double* Y, double* J, double* E, double* F, double* temp_generator, double* temp_solver, const int n, const int m, const int T_max, const int num_samples) {
+__global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double* Bs, double* Xs, double* Y, double* J, double* E, double* VF, double* IF, double* temp_generator, double* temp_solver, const int n, const int m, const int T_max, const int num_samples) {
 	const auto time_point = blockIdx.x * blockDim.x + threadIdx.x;
 	const auto B = &Bs[time_point * n];
 	
 	// Calculate J - YE
 	for (auto i = 0; i < m; i++)
 	{
-		temp_generator[i] = J[i] - Y[i] * E[i] * cos(2 * M_PI * F[i] * time_point * T_max / num_samples);
+		temp_generator[i] = J[i] - Y[i] * E[i] * cos(2 * M_PI * VF[i] * time_point * T_max / num_samples);
 	}
 
 	// Multiply A by output
@@ -136,21 +137,21 @@ int main(const int argc, char* argv[]) {
     if (argc != 2) {
         std::cerr <<
         R"(Invalid number of arguments! usage:
-        parallelSpice.exe [json file path])" << '\n';
+        parallelSpice.exe [input json file path])" << '\n';
         exit(1);
     }
 	
 	// Parse json file with circuit configuration
-    const auto file_path = std::string{argv[1]};
+    const auto in_file_path = std::string{argv[1]};
     auto result = json::parse_result{};
-    auto parser = json::JsonParser(file_path);
+    auto parser = json::JsonParser(in_file_path);
     if (!parser.parse(result)) {
         exit(1);
     }
-    dbg("Successfully parsed file: ", file_path);
-    
+    dbg("Successfully parsed file: ", in_file_path);
+	    
     // Solve.
-    auto cudaStatus = solve(result);
+    auto cudaStatus = solve(result, in_file_path);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "solve failed!");
         return 1;
@@ -167,32 +168,15 @@ int main(const int argc, char* argv[]) {
     return 0;
 }
 
-cudaError_t solve(json::parse_result& data) {
-	const auto T_max = static_cast<int>(*std::max_element(data.F.data(), data.F.data() + data.F.size()));
-	auto num_timepoints = 2 * std::max(1, T_max); // Set num_timepoints as 2*MAX(F)
+cudaError_t solve(json::parse_result& data, std::string out_path) {
+	const auto T_max = static_cast<int>(*std::max_element(data.VF.data(), data.VF.data() + data.VF.size()));
+	const auto num_timepoints = 2 * std::max(1, T_max); // Set num_timepoints as 2*MAX(F)
+	const auto time_step = 0;
 	
 	std::vector<double> Bs(num_timepoints * data.n, 0.0);
 	std::vector<double> Xs(num_timepoints * data.n, 0.0);
 	std::vector<double> temp_solver(data.n, 0.0);
 	std::vector<double> temp_generator(data.n, 0.0);
-
-	/*auto grid_device = cuda_mem::grid_to_cuda_2d(data.A);
-	auto g = cuda_mem::cuda_2d_to_grid(grid_device);
-
-	auto vec_device = cuda_mem::make_cuda_unique(data.E);
-	auto vec = cuda_mem::cuda_unique_to_vector(vec_device);*/
-
-	double* dev_A = 0;
-	double* dev_S = 0;
-	double* dev_L = 0;
-	double* dev_Bs = 0;
-	double* dev_Xs = 0;
-	double* dev_Y = 0;
-	double* dev_J = 0;
-	double* dev_E = 0;
-	double* dev_F = 0;
-	double* dev_temp_solver = 0;
-	double* dev_temp_generator = 0;
 
 	// Get coefficient matrix
 	auto S = computeCoefficientMatrix(data.A, data.Y, data.n, data.m);
@@ -200,154 +184,23 @@ cudaError_t solve(json::parse_result& data) {
 	// Perform Cholesky decomposition
 	auto L = choleskyDecomposition(S, data.n);
 
+	const auto& device_a = cuda_mem::grid_to_cuda_2d(data.A);
+	const auto& device_l = cuda_mem::vec_to_cuda_unique(L);
+	const auto& device_bs = cuda_mem::vec_to_cuda_unique(Bs);
+	const auto& device_xs = cuda_mem::vec_to_cuda_unique(Xs);
+	const auto& device_y = cuda_mem::vec_to_cuda_unique(data.Y);
+	const auto& device_j = cuda_mem::vec_to_cuda_unique(data.J);
+	const auto& device_e = cuda_mem::vec_to_cuda_unique(data.E);
+	const auto& device_vf = cuda_mem::vec_to_cuda_unique(data.VF);
+	const auto& device_vi = cuda_mem::vec_to_cuda_unique(data.IF);
+	const auto& device_temp_g = cuda_mem::vec_to_cuda_unique(temp_generator);
+	const auto& device_temp_s = cuda_mem::vec_to_cuda_unique(temp_solver);
+
 	// Choose which GPU to run on, change this on a multi-GPU system.
 	auto cudaStatus = cudaSetDevice(0);
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
-		goto Error;
-	}
-
-	// Allocate GPU buffers for image and new image.
-	cudaStatus = cudaMalloc((void**)& dev_A, data.m * data.n * sizeof(double));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc for A array failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMalloc((void**)& dev_S, data.n * data.n * sizeof(double));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc for S array failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMalloc((void**)& dev_L, data.n * data.n * sizeof(double));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc for L array failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMalloc((void**)& dev_Bs, num_timepoints * data.n * sizeof(double));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc for Bs array failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMalloc((void**)& dev_Xs, num_timepoints * data.n * sizeof(double));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc for Xs array failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMalloc((void**)& dev_Y, data.m * sizeof(double));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc for Y array failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMalloc((void**)& dev_J, data.m * sizeof(double));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc for J array failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMalloc((void**)& dev_E, data.m * sizeof(double));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc for E array failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMalloc((void**)& dev_F, data.m * sizeof(double));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc for F array failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMalloc((void**)& dev_temp_solver, data.n * sizeof(double));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc for temp solver array failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMalloc((void**)& dev_temp_generator, data.n * sizeof(double));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc for temp solver array failed!");
-		goto Error;
-	}
-
-	auto a = new double[data.m * data.n];
-	for (auto i = 0; i < data.m; i++)
-	{
-		for (auto j = 0; j < data.n; j++)
-		{
-			a[i * data.m + j] = data.A[i][j];
-		}
-	}
-
-	// Copy input vectors from host memory to GPU buffers.
-	cudaStatus = cudaMemcpy(dev_A, a, data.m * data.n * sizeof(double), cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy from A to dev_A failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMemcpy(dev_S, S.data(), data.n * data.n * sizeof(double), cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy from S to dev_S failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMemcpy(dev_L, L.data(), data.n * data.n * sizeof(double), cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy from L to dev_L failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMemcpy(dev_Bs, Bs.data(), num_timepoints * data.n * sizeof(double), cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy from Bs to dev_Bs failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMemcpy(dev_Xs, Xs.data(), num_timepoints * data.n * sizeof(double), cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy from Xs to dev_Xs failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMemcpy(dev_Y, data.Y.data(), data.m * sizeof(double), cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy from Y to dev_Y failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMemcpy(dev_J, data.J.data(), data.m * sizeof(double), cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy from J to dev_J failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMemcpy(dev_E, data.E.data(), data.m * sizeof(double), cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy from E to dev_E failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMemcpy(dev_F, data.F.data(), data.m * sizeof(double), cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy from F to dev_F failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMemcpy(dev_temp_solver, temp_solver.data(), data.n * sizeof(double), cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy from temp_solver to dev_temp_solver failed!");
-		goto Error;
-	}
-
-	cudaStatus = cudaMemcpy(dev_temp_generator, temp_generator.data(), data.n * sizeof(double), cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy from temp_generator to dev_temp_generator failed!");
-		goto Error;
+		return cudaStatus;
 	}
 
 	int num_blocks = 0;
@@ -355,13 +208,13 @@ cudaError_t solve(json::parse_result& data) {
 	cuda_utils::divide_threads_into_blocks(num_timepoints, num_blocks, num_threads);
 
 	// Generate Bs and sovle for Xs
-	bTimepointGeneratorAndSolverKernel << <num_blocks, num_threads >> > (dev_A, dev_L, dev_Bs, dev_Xs, dev_Y, dev_J, dev_E, dev_F, dev_temp_generator, dev_temp_solver, data.n, data.m, T_max, num_timepoints);
+	bTimepointGeneratorAndSolverKernel << <num_blocks, num_threads >> > (device_a.get(), device_l.get(), device_bs.get(), device_xs.get(), device_y.get(), device_j.get(), device_e.get(), device_vf.get(), device_vi.get(), device_temp_g.get(), device_temp_s.get(), data.n, data.m, T_max, num_timepoints);
 
 	// Check for any errors launching the kernel
 	cudaStatus = cudaGetLastError();
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "bTimepointGeneratorAndSolverKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-		goto Error;
+		return cudaStatus;
 	}
 
 	// cudaDeviceSynchronize waits for the kernel to finish, and returns
@@ -369,15 +222,10 @@ cudaError_t solve(json::parse_result& data) {
 	cudaStatus = cudaDeviceSynchronize();
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching bTimepointGeneratorKernel!\n", cudaStatus);
-		goto Error;
+		return cudaStatus;
 	}
 
-	// Copy output vector from GPU buffer to host memory.
-	cudaStatus = cudaMemcpy(Xs.data(), dev_Xs, num_timepoints * data.n * sizeof(double), cudaMemcpyDeviceToHost);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy from dev_Xs to Xs failed!");
-		goto Error;
-	}
+	auto solution = cuda_mem::cuda_unique_to_vector(device_xs);
 
 	// Print timepoints
 	for (auto i = 0; i < num_timepoints; i++)
@@ -385,7 +233,7 @@ cudaError_t solve(json::parse_result& data) {
 		printf("Timepoint %d\n", i + 1);
 		for (auto j = 0; j < data.n; j++)
 		{
-			printf("%lf ", Xs[i * data.n + j]);
+			printf("%lf ", solution[i * data.n + j]);
 		}
 		printf("\n");
 	}
@@ -396,7 +244,7 @@ cudaError_t solve(json::parse_result& data) {
 		temp[i] = 0;
 		for (auto j = 0; j < data.n; j++)
 		{
-			temp[i] += S[i * data.n + j] * Xs[j];
+			temp[i] += S[i * data.n + j] * solution[j];
 		}
 	}
 
@@ -406,20 +254,16 @@ cudaError_t solve(json::parse_result& data) {
 	{
 		printf("%lf ", temp[i]);
 	}
-			
 
-Error:
-	cudaFree(dev_A);
-	cudaFree(dev_S);
-	cudaFree(dev_L);
-	cudaFree(dev_Bs);
-	cudaFree(dev_Xs);
-	cudaFree(dev_Y);
-	cudaFree(dev_J);
-	cudaFree(dev_E);
-	cudaFree(dev_F);
-	cudaFree(dev_temp_solver);
-	cudaFree(dev_temp_generator);
+	// Covnert Xs to grid for output
+	auto out_grid = cuda_mem::grid<double>();
+	for (auto i = 0; i < num_timepoints; i++)
+	{
+		out_grid.emplace_back(std::vector<double>(&solution[i * data.n], &solution[i * data.n] + data.n));
+	}
 
-	return cudaStatus;
+	auto writer = json::JsonWriter(out_path);
+	writer.write(time_step, out_grid);
+
+	return cudaSuccess;
 }

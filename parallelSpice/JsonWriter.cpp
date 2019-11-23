@@ -5,6 +5,8 @@
 #include "include/rapidjson/prettywriter.h"
 #include "include/rapidjson/stringbuffer.h"
 
+using namespace json;
+
 JsonWriter::JsonWriter(const std::string& input_file_path) {
 	m_output_file = cuda_utils::make_output_file(input_file_path, "_output", "json");
 	m_doc = {};
