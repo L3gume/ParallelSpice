@@ -56,10 +56,15 @@ _Check_return_ bool JsonParser::parse(parse_result& result) {
     const auto& e_doc = m_doc["E"];
     if (!parse_vector(e_doc, result.E)) return false;
     
-    // parse the F Vector
-    if (!m_doc.HasMember("F")) return false;
-    const auto& f_doc = m_doc["F"];
-    if (!parse_vector(f_doc, result.F)) return false;
+    // parse the VF Vector
+    if (!m_doc.HasMember("VF")) return false;
+    const auto& f_doc = m_doc["VF"];
+    if (!parse_vector(f_doc, result.VF)) return false;
+
+	// parse the IF Vector
+	if (!m_doc.HasMember("IF")) return false;
+	const auto& f_doc = m_doc["IF"];
+	if (!parse_vector(f_doc, result.IF)) return false;
 
     // Successfully reached the end
     return true;
