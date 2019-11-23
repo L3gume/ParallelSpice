@@ -13,20 +13,25 @@
 #include "dbg.h"
 #include "cuda_utils.h"
 
+constexpr auto BASE_RATE = 20.0;
+
 cudaError_t solve(json::parse_result& data, std::string out_path);
 std::vector<double> choleskyDecomposition(std::vector<double> S, const int n);
 std::vector<double> computeCoefficientMatrix(std::vector<std::vector<double>> A, std::vector<double> Y, const int n, const int m);
 
 // Genereates a set of Bs where B_i is the forcing function at a timepoint.
 // Returns X_is where Xs are node voltages associated with different timepoints based on the generated B_is.
-__global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double* Bs, double* Xs, double* Y, double* J, double* E, double* VF, double* IF, double* temp_generator, double* temp_solver, const int n, const int m, const int T_max, const int num_samples) {
+__global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double* Bs, double* Xs, double* Y, double* J, double* E, double* VF, double* IF, double* temp_generator, double* temp_solver, const int n, const int m, const double delta_T) {
 	const auto time_point = blockIdx.x * blockDim.x + threadIdx.x;
 	const auto B = &Bs[time_point * n];
+	const auto temp_G = &temp_generator[time_point * n];
+	const auto temp_S = &temp_solver[time_point * n];
 	
-	// Calculate J - YE
+	// Calculate J - YE taking VF and IF into account
 	for (auto i = 0; i < m; i++)
 	{
-		temp_generator[i] = J[i] - Y[i] * E[i] * cos(2 * M_PI * VF[i] * time_point * T_max / num_samples);
+		temp_G[i] = (J[i] * cos(2 * M_PI * IF[i] * time_point * delta_T)) - Y[i] * E[i] * cos(2 * M_PI * VF[i] * time_point * delta_T);
+		printf("TIMEPOINT * DELTA_T: %lf\n", temp_G[i]);
 	}
 
 	// Multiply A by output
@@ -35,7 +40,7 @@ __global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double*
 		auto sum = 0.0;
 		for (auto j = 0; j < m; j++)
 		{
-			sum += A[i * n + j] * temp_generator[j];
+			sum += A[i * n + j] * temp_G[j];
 		}
 
 		// Store in B
@@ -51,10 +56,10 @@ __global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double*
 
 		for (auto j = 0; j < i; j++)
 		{
-			accumulator += L[i * n + j] * temp_solver[j];
+			accumulator += L[i * n + j] * temp_S[j];
 		}
 
-		temp_solver[i] = (B[i] - accumulator) / L[i * n + i];
+		temp_S[i] = (B[i] - accumulator) / L[i * n + i];
 	}
 
 	// Solve (L_T)x = temp_solver
@@ -67,7 +72,7 @@ __global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double*
 			accumulator += L[j * n + i] * X[j];
 		}
 
-		X[i] = (temp_solver[i] - accumulator) / L[i * n + i];
+		X[i] = (temp_S[i] - accumulator) / L[i * n + i];
 	}
 }
 
@@ -169,14 +174,30 @@ int main(const int argc, char* argv[]) {
 }
 
 cudaError_t solve(json::parse_result& data, std::string out_path) {
-	const auto T_max = static_cast<int>(*std::max_element(data.VF.data(), data.VF.data() + data.VF.size()));
-	const auto num_timepoints = 2 * std::max(1, T_max); // Set num_timepoints as 2*MAX(F)
-	const auto time_step = 0;
+	const auto F_V_max = *std::max_element(data.VF.data(), data.VF.data() + data.VF.size());
+	const auto F_I_max = *std::max_element(data.IF.data(), data.IF.data() + data.IF.size());
+	const auto F_max = std::max(F_V_max, F_I_max);
+
+	auto F_min = F_max;
+	for (auto i = 0; i < data.VF.size(); i++)
+	{
+		if (data.VF[i] != 0.0 && data.VF[i] < F_min)
+			F_min = data.VF[i];
+
+		if (data.IF[i] != 0.0 && data.IF[i] < F_min)
+			F_min = data.IF[i];
+	}
+
+	auto T_max = 1 / F_min;
+	auto T_min = 1 / F_max;
+
+	auto delta_T = T_min / BASE_RATE;
+	auto num_timepoints = static_cast<int>((T_max / T_min) / delta_T);
 	
 	std::vector<double> Bs(num_timepoints * data.n, 0.0);
 	std::vector<double> Xs(num_timepoints * data.n, 0.0);
-	std::vector<double> temp_solver(data.n, 0.0);
-	std::vector<double> temp_generator(data.n, 0.0);
+	std::vector<double> temp_solver(num_timepoints * data.n, 0.0);
+	std::vector<double> temp_generator(num_timepoints * data.n, 0.0);
 
 	// Get coefficient matrix
 	auto S = computeCoefficientMatrix(data.A, data.Y, data.n, data.m);
@@ -208,7 +229,7 @@ cudaError_t solve(json::parse_result& data, std::string out_path) {
 	cuda_utils::divide_threads_into_blocks(num_timepoints, num_blocks, num_threads);
 
 	// Generate Bs and sovle for Xs
-	bTimepointGeneratorAndSolverKernel << <num_blocks, num_threads >> > (device_a.get(), device_l.get(), device_bs.get(), device_xs.get(), device_y.get(), device_j.get(), device_e.get(), device_vf.get(), device_vi.get(), device_temp_g.get(), device_temp_s.get(), data.n, data.m, T_max, num_timepoints);
+	bTimepointGeneratorAndSolverKernel << <num_blocks, num_threads >> > (device_a.get(), device_l.get(), device_bs.get(), device_xs.get(), device_y.get(), device_j.get(), device_e.get(), device_vf.get(), device_vi.get(), device_temp_g.get(), device_temp_s.get(), data.n, data.m, delta_T);
 
 	// Check for any errors launching the kernel
 	cudaStatus = cudaGetLastError();
@@ -226,34 +247,31 @@ cudaError_t solve(json::parse_result& data, std::string out_path) {
 	}
 
 	auto solution = cuda_mem::cuda_unique_to_vector(device_xs);
+	
+	std::vector<double> temp(num_timepoints * data.n, 0.0);
+	for (auto t = 0; t < num_timepoints; t++)
+	{
+		for (auto i = 0; i < data.n; i++)
+		{
+			for (auto j = 0; j < data.n; j++)
+			{
+				temp[t * data.n + i] += S[i * data.n + j] * solution[t * data.n + j];
+			}
+		}
+	}
+	
+	auto sanity = cuda_mem::cuda_unique_to_vector(device_bs);
 
 	// Print timepoints
+	auto error = 0.0;
 	for (auto i = 0; i < num_timepoints; i++)
 	{
-		printf("Timepoint %d\n", i + 1);
 		for (auto j = 0; j < data.n; j++)
 		{
-			printf("%lf ", solution[i * data.n + j]);
-		}
-		printf("\n");
-	}
-
-	auto temp = new double[data.n];
-	for (auto i = 0; i < data.n; i++)
-	{
-		temp[i] = 0;
-		for (auto j = 0; j < data.n; j++)
-		{
-			temp[i] += S[i * data.n + j] * solution[j];
+			error += temp[i * data.n + j] - sanity[i * data.n + j];
 		}
 	}
-
-	// Print timepoints
-	printf("Sanity: ");
-	for (auto i = 0; i < data.n; i++)
-	{
-		printf("%lf ", temp[i]);
-	}
+	printf("Sanity: %lf", error);
 
 	// Covnert Xs to grid for output
 	auto out_grid = cuda_mem::grid<double>();
@@ -263,7 +281,9 @@ cudaError_t solve(json::parse_result& data, std::string out_path) {
 	}
 
 	auto writer = json::JsonWriter(out_path);
-	writer.write(time_step, out_grid);
+	if (!writer.write(delta_T, out_grid)) {
+		return cudaError(1);
+	}
 
 	return cudaSuccess;
 }

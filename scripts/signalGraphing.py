@@ -1,4 +1,3 @@
-import os
 import numpy as np
 import json
 import matplotlib.pyplot as plt
@@ -7,7 +6,7 @@ import matplotlib.pyplot as plt
 json_path = '../mesh_files/test_output.json'
 
 #### change node to desired node
-node = 1
+node = 0
 
 def update_annot(ind):
     x,y = line.get_data()
@@ -34,9 +33,6 @@ def hover(event):
 with open(json_path, 'r') as f:
     json_dict = json.load(f)
 
-# we want to plot the voltages of nodes:
-node_ids = [0, 1, 2]
-
 timeSteps = 0
 voltages = []
 
@@ -44,9 +40,9 @@ for matrix in json_dict:
     # if json element with b, it is a matrix with the associated voltages
     if matrix.startswith('entries'):
         entries = json_dict[matrix]
-        voltages_at_timestep = []
         for entry_t in entries:
-            for node_id in node_ids:
+            voltages_at_timestep = []
+            for node_id in range(len(entry_t)):
                 # add to the voltages to plot
                 voltages_at_timestep.append(entry_t[node_id])
             voltages.append(voltages_at_timestep)
