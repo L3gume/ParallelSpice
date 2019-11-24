@@ -12,67 +12,81 @@
 #include "JsonWriter.h"
 #include "dbg.h"
 #include "cuda_utils.h"
+#include <chrono>
 
 constexpr auto BASE_RATE = 20.0;
 
-cudaError_t solve(json::parse_result& data, std::string out_path);
+cudaError_t solve(json::parse_result& data, std::string out_path, int n_threads);
 std::vector<double> choleskyDecomposition(std::vector<double> S, const int m);
 std::vector<double> computeCoefficientMatrix(std::vector<std::vector<double>> A, std::vector<double> Y, const int n, const int m);
 
 // Genereates a set of Bs where B_i is the forcing function at a timepoint.
 // Returns X_is where Xs are node voltages associated with different timepoints based on the generated B_is.
-__global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double* Bs, double* Xs, double* Y, double* J, double* E, double* VF, double* IF, double* temp_generator, double* temp_solver, const int n, const int m, const double delta_T) {
-	const auto time_point = blockIdx.x * blockDim.x + threadIdx.x;
-	const auto B = &Bs[time_point * m];
-	const auto temp_G = &temp_generator[time_point * n];
-	const auto temp_S = &temp_solver[time_point * m];
+__global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double* Bs,
+                            double* Xs, double* Y, double* J, double* E, double* VF,
+                            double* IF, double* temp_generator, double* temp_solver,
+                            const int n, const int m, const double delta_T, const int n_threads, const int n_timepoints) {
+    
+	const auto idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const auto n_elems = n_timepoints / n_threads;
+    const auto n_extra = n_timepoints % n_threads;
+    const auto start = idx * n_elems;
+    const auto n_todo = idx == n_threads - 1 ? n_elems + n_extra : n_elems;
+	//const auto B = &Bs[time_point * m];
+	//const auto temp_G = &temp_generator[time_point * n];
+	//const auto temp_S = &temp_solver[time_point * m];
+	const auto B = &Bs[start * m];
+	const auto temp_G = &temp_generator[start * n];
+	const auto temp_S = &temp_solver[start * m];
 	
-	// Calculate J - YE taking VF and IF into account
-	for (auto i = 0; i < n; i++)
-	{
-		temp_G[i] = (J[i] * cos(2 * M_PI * IF[i] * time_point * delta_T)) - Y[i] * E[i] * cos(2 * M_PI * VF[i] * time_point * delta_T);
-	}
+    for (auto time_point = start; time_point < n_todo; ++time_point) {
+        // Calculate J - YE taking VF and IF into account
+        for (auto i = 0; i < n; i++)
+        {
+            temp_G[i] = (J[i] * cos(2 * M_PI * IF[i] * time_point * delta_T)) - Y[i] * E[i] * cos(2 * M_PI * VF[i] * time_point * delta_T);
+        }
 
-	// Multiply A by output
-	for (auto i = 0; i < m; i++)
-	{
-		auto sum = 0.0;
-		for (auto j = 0; j < n; j++)
-		{
-			sum += A[i * n + j] * temp_G[j];
-		}
+        // Multiply A by output
+        for (auto i = 0; i < m; i++)
+        {
+            auto sum = 0.0;
+            for (auto j = 0; j < n; j++)
+            {
+                sum += A[i * n + j] * temp_G[j];
+            }
 
-		// Store in B
-		B[i] = sum;
-	}
+            // Store in B
+            B[i] = sum;
+        }
 
-	auto accumulator = 0.0;
+        auto accumulator = 0.0;
 
-	// Solve L*temp_solver = b
-	for (auto i = 0; i < m; i++)
-	{
-		accumulator = 0.0;
+        // Solve L*temp_solver = b
+        for (auto i = 0; i < m; i++)
+        {
+            accumulator = 0.0;
 
-		for (auto j = 0; j < i; j++)
-		{
-			accumulator += L[i * m + j] * temp_S[j];
-		}
+            for (auto j = 0; j < i; j++)
+            {
+                accumulator += L[i * m + j] * temp_S[j];
+            }
 
-		temp_S[i] = (B[i] - accumulator) / L[i * m + i];
-	}
+            temp_S[i] = (B[i] - accumulator) / L[i * m + i];
+        }
 
-	// Solve (L_T)x = temp_solver
-	const auto X = &Xs[time_point * m];
-	for (auto i = m - 1; i >= 0; i--)
-	{
-		accumulator = 0.0;
-		for (auto j = i + 1; j < m; j++)
-		{
-			accumulator += L[j * m + i] * X[j];
-		}
+        // Solve (L_T)x = temp_solver
+        const auto X = &Xs[time_point * m];
+        for (auto i = m - 1; i >= 0; i--)
+        {
+            accumulator = 0.0;
+            for (auto j = i + 1; j < m; j++)
+            {
+                accumulator += L[j * m + i] * X[j];
+            }
 
-		X[i] = (temp_S[i] - accumulator) / L[i * m + i];
-	}
+            X[i] = (temp_S[i] - accumulator) / L[i * m + i];
+        }
+    }
 }
 
 // Perform Cholesky decomposition
@@ -138,10 +152,12 @@ std::vector<double> computeCoefficientMatrix(std::vector<std::vector<double>> A,
 }
 
 int main(const int argc, char* argv[]) {
-    if (argc != 2) {
+    if (argc != 3) {
         std::cerr <<
-        R"(Invalid number of arguments! usage:
-        parallelSpice.exe [input json file path])" << '\n';
+        R"(Invalid arguments! usage:
+        parallelSpice.exe [file] [threads]
+            file: circuit descriptor file (json)
+            threads: number of threads to use, -1 to use maximum possible)" << '\n';
         exit(1);
     }
 	
@@ -153,9 +169,11 @@ int main(const int argc, char* argv[]) {
         exit(1);
     }
     dbg("Successfully parsed file: ", in_file_path);
+    
+    const auto n_threads = std::atoi(argv[2]);
 	    
     // Solve.
-    auto cudaStatus = solve(result, in_file_path);
+    auto cudaStatus = solve(result, in_file_path, n_threads);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "solve failed!");
         return 1;
@@ -172,7 +190,7 @@ int main(const int argc, char* argv[]) {
     return 0;
 }
 
-cudaError_t solve(json::parse_result& data, std::string out_path) {
+cudaError_t solve(json::parse_result& data, std::string out_path, int n_threads) {
 	const auto F_V_max = *std::max_element(data.VF.data(), data.VF.data() + data.VF.size());
 	const auto F_I_max = *std::max_element(data.IF.data(), data.IF.data() + data.IF.size());
 	const auto F_max = std::max(F_V_max, F_I_max);
@@ -185,7 +203,7 @@ cudaError_t solve(json::parse_result& data, std::string out_path) {
 
 		if (data.IF[i] != 0.0 && data.IF[i] < F_min)
 			F_min = data.IF[i];
-	}
+	} 
 
 	auto T_max = 1 / F_min;
 	auto T_min = 1 / F_max;
@@ -225,10 +243,14 @@ cudaError_t solve(json::parse_result& data, std::string out_path) {
 
 	int num_blocks = 0;
 	int num_threads = 0;
-	cuda_utils::divide_threads_into_blocks(num_timepoints, num_blocks, num_threads);
+    if (n_threads == -1) {
+        n_threads = num_timepoints;
+    }
+	cuda_utils::divide_threads_into_blocks(n_threads, num_blocks, num_threads);
 
+    const auto start = std::chrono::high_resolution_clock::now();
 	// Generate Bs and sovle for Xs
-	bTimepointGeneratorAndSolverKernel << <num_blocks, num_threads >> > (device_a.get(), device_l.get(), device_bs.get(), device_xs.get(), device_y.get(), device_j.get(), device_e.get(), device_vf.get(), device_vi.get(), device_temp_g.get(), device_temp_s.get(), data.n, data.m, delta_T);
+	bTimepointGeneratorAndSolverKernel <<<num_blocks, num_threads >>> (device_a.get(), device_l.get(), device_bs.get(), device_xs.get(), device_y.get(), device_j.get(), device_e.get(), device_vf.get(), device_vi.get(), device_temp_g.get(), device_temp_s.get(), data.n, data.m, delta_T, n_threads, num_timepoints);
 
 	// Check for any errors launching the kernel
 	cudaStatus = cudaGetLastError();
@@ -244,6 +266,8 @@ cudaError_t solve(json::parse_result& data, std::string out_path) {
 		fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching bTimepointGeneratorKernel!\n", cudaStatus);
 		return cudaStatus;
 	}
+    const auto end = std::chrono::high_resolution_clock::now();
+    std::cout << "Elapsed time (" << n_threads << " thread(s)): " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " microseconds" << '\n';
 
 	// Get solution for X from device
 	auto X_solution = cuda_mem::cuda_unique_to_vector(device_xs);

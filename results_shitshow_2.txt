@@ -1,0 +1,12 @@
+Ran on a GTX 1080 gpu.
+Program compiled in Release mode on Visual Studio
+Runtime captured using std::chrono::high_resolution_clock
+
+Elapsed time (1 thread(s)): 142511 microseconds
+Elapsed time (2 thread(s)): 72509 microseconds
+Elapsed time (4 thread(s)): 36716 microseconds
+Elapsed time (8 thread(s)): 19599 microseconds
+Elapsed time (16 thread(s)): 10375 microseconds
+Elapsed time (32 thread(s)): 5624 microseconds
+Elapsed time (64 thread(s)): 4074 microseconds
+Elapsed time (90 thread(s)): 4082 microseconds
