@@ -3,10 +3,10 @@ import json
 import matplotlib.pyplot as plt
 
 #### change path to desired output
-json_path = '../scripts/circuit_output.json'
+json_path = '../mesh_files/test_6_output.json'
 
 #### change node to desired node
-node = 0
+node = 1
 
 def update_annot(ind):
     x,y = line.get_data()
