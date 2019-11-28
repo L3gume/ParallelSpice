@@ -35,11 +35,12 @@ __global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double*
 	//const auto B = &Bs[time_point * m];
 	//const auto temp_G = &temp_generator[time_point * n];
 	//const auto temp_S = &temp_solver[time_point * m];
-	const auto B = &Bs[start * m];
-	const auto temp_G = &temp_generator[start * n];
-	const auto temp_S = &temp_solver[start * m];
+	
 	
     for (auto time_point = start; time_point < start + n_todo; ++time_point) {
+		const auto B = &Bs[time_point * m];
+		const auto temp_G = &temp_generator[time_point * n];
+		const auto temp_S = &temp_solver[time_point * m];
         // Calculate J - YE taking VF and IF into account
         for (auto i = 0; i < n; i++)
         {
