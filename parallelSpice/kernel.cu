@@ -30,8 +30,8 @@ __global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double*
 	const auto idx = blockIdx.x * blockDim.x + threadIdx.x;
     const auto n_elems = n_timepoints / n_threads;
     const auto n_extra = n_timepoints % n_threads;
+	const auto n_todo = idx == n_threads - 1 ? n_elems + n_extra : n_elems;
     const auto start = idx * n_elems;
-    const auto n_todo = idx == n_threads - 1 ? n_elems + n_extra : n_elems;
 	//const auto B = &Bs[time_point * m];
 	//const auto temp_G = &temp_generator[time_point * n];
 	//const auto temp_S = &temp_solver[time_point * m];
@@ -39,7 +39,7 @@ __global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double*
 	const auto temp_G = &temp_generator[start * n];
 	const auto temp_S = &temp_solver[start * m];
 	
-    for (auto time_point = start; time_point < n_todo; ++time_point) {
+    for (auto time_point = start; time_point < start + n_todo; ++time_point) {
         // Calculate J - YE taking VF and IF into account
         for (auto i = 0; i < n; i++)
         {
@@ -74,8 +74,8 @@ __global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double*
             temp_S[i] = (B[i] - accumulator) / L[i * m + i];
         }
 
-        // Solve (L_T)x = temp_solver
-        const auto X = &Xs[time_point * m];
+        // Solve (L_T)x = temp_solver     
+		const auto X = &Xs[time_point * m];
         for (auto i = m - 1; i >= 0; i--)
         {
             accumulator = 0.0;
