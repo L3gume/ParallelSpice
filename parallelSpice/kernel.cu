@@ -32,10 +32,6 @@ __global__ void bTimepointGeneratorAndSolverKernel(double* A, double* L, double*
     const auto n_extra = n_timepoints % n_threads;
 	const auto n_todo = idx == n_threads - 1 ? n_elems + n_extra : n_elems;
     const auto start = idx * n_elems;
-	//const auto B = &Bs[time_point * m];
-	//const auto temp_G = &temp_generator[time_point * n];
-	//const auto temp_S = &temp_solver[time_point * m];
-	
 	
     for (auto time_point = start; time_point < start + n_todo; ++time_point) {
 		const auto B = &Bs[time_point * m];
