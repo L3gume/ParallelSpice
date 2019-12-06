@@ -1,0 +1,74 @@
+5x5 - 1, 2
+
+Elapsed time (1 thread(s)): 14106 microseconds
+Elapsed time (2 thread(s)): 7327 microseconds
+Elapsed time (4 thread(s)): 4057 microseconds
+Elapsed time (8 thread(s)): 2438 microseconds
+Elapsed time (16 thread(s)): 1519 microseconds
+Elapsed time (32 thread(s)): 3676 microseconds // abherrant data, delete?
+Elapsed time (64 thread(s)): 3561 microseconds // abherrant data, delete?
+Elapsed time (80 thread(s)): 984 microseconds
+
+NOTE: probably has to do with the subdivisions and stuff
+
+10x10 - 1, 2
+
+Elapsed time (1 thread(s)): 125644 microseconds
+Elapsed time (2 thread(s)): 64294 microseconds
+Elapsed time (4 thread(s)): 33265 microseconds
+Elapsed time (8 thread(s)): 17774 microseconds
+Elapsed time (16 thread(s)): 10185 microseconds
+Elapsed time (32 thread(s)): 31124 microseconds // abherrant data, delete?
+Elapsed time (64 thread(s)): 29003 microseconds // abherrant data, delete?
+Elapsed time (80 thread(s)): 4164 microseconds
+
+15x15 - 1, 2
+
+Elapsed time (1 thread(s)): 514885 microseconds
+Elapsed time (2 thread(s)): 264733 microseconds
+Elapsed time (4 thread(s)): 137833 microseconds
+Elapsed time (8 thread(s)): 75549 microseconds
+Elapsed time (16 thread(s)): 42489 microseconds
+Elapsed time (32 thread(s)): 129992 microseconds // abherrant data, delete?
+Elapsed time (64 thread(s)): 123195 microseconds // abherrant data, delete?
+Elapsed time (80 thread(s)): 15631 microseconds
+
+5x5 - 10, 15
+
+Elapsed time (1 thread(s)): 76696 microseconds
+Elapsed time (2 thread(s)): 39286 microseconds
+Elapsed time (4 thread(s)): 21064 microseconds
+Elapsed time (8 thread(s)): 11681 microseconds
+Elapsed time (16 thread(s)): 6958 microseconds
+Elapsed time (32 thread(s)): 4687 microseconds
+Elapsed time (64 thread(s)): 3692 microseconds
+Elapsed time (128 thread(s)): 13568 microseconds
+Elapsed time (256 thread(s)): 34274 microseconds
+Elapsed time (450 thread(s)): 2393 microseconds
+
+10x10 - 10, 15
+
+Elapsed time (1 thread(s)): 642846 microseconds
+Elapsed time (2 thread(s)): 332607 microseconds
+Elapsed time (4 thread(s)): 182162 microseconds
+Elapsed time (8 thread(s)): 99245 microseconds
+Elapsed time (16 thread(s)): 54649 microseconds
+Elapsed time (32 thread(s)): 33133 microseconds
+Elapsed time (64 thread(s)): 22651 microseconds
+Elapsed time (128 thread(s)): 116101 microseconds
+Elapsed time (256 thread(s)): 295423 microseconds
+Elapsed time (450 thread(s)): 14612 microseconds
+
+15x15 - 10, 15
+
+Elapsed time (1 thread(s)): 2715938 microseconds
+Elapsed time (2 thread(s)): 1372830 microseconds
+Elapsed time (4 thread(s)): 722946 microseconds
+Elapsed time (8 thread(s)): 397181 microseconds
+Elapsed time (16 thread(s)): 225141 microseconds
+Elapsed time (32 thread(s)): 132795 microseconds
+Elapsed time (64 thread(s)): 91694 microseconds
+Elapsed time (150 thread(s)): 61715 microseconds
+Elapsed time (450 thread(s)): 59480 microseconds
+
+NOTE: here I avoided 128 and 256, results look better
